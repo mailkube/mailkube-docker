@@ -1,0 +1,77 @@
+# =============================================================================
+#  10-service.yaml
+#  Cluster-internal Service for the relay, plus the headless Service that
+#  governs the StatefulSet in 20-statefulset-cluster-service.yaml.
+# =============================================================================
+#
+#  Applications connect to:
+#      host: smtp.<namespace>.svc.cluster.local   (or just `smtp` in-namespace)
+#      port: 25
+#      no username, no password, no TLS
+#
+#  THE PORT MAPPING IS THE POINT. `port: 25` is what applications dial;
+#  `targetPort` is what the container actually listens on. Keeping the Service
+#  on 25 means every SMTP client library's default behaviour keeps working even
+#  when the relay itself listens on a high, unprivileged port. To move the
+#  container off 25, set LISTEN_PORT on the workload and change targetPort to
+#  match; nothing on the application side changes.
+#
+#  ClusterIP, never NodePort or LoadBalancer. This listener is unauthenticated
+#  by design. Anything that can reach it can send mail as your verified domain,
+#  so exposing it outside the cluster hands your sending reputation away. Pair
+#  this with 30-networkpolicy.yaml, which is the control that actually enforces
+#  who may connect.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: smtp
+  labels:
+    app.kubernetes.io/name: mailkube-smtp-relay
+    app.kubernetes.io/component: relay
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mailkube-smtp-relay
+    app.kubernetes.io/component: relay
+  ports:
+    - name: smtp
+      protocol: TCP
+      # What applications dial.
+      port: 25
+      # The container's listener. Named, so the workload can move it (LISTEN_PORT
+      # plus a matching containerPort name) without editing this file.
+      targetPort: relay-smtp
+---
+# -----------------------------------------------------------------------------
+#  Headless Service.
+#
+#  Required by the StatefulSet as its serviceName: it gives each replica a
+#  stable DNS name (relay-0.smtp-headless, relay-1.smtp-headless, ...). That
+#  matters for an operator inspecting one replica's queue with
+#  `kubectl exec relay-0 -- postqueue -c /run/postfix -p`.
+#
+#  Applications should NOT use this one. They use the `smtp` Service above,
+#  which load-balances across replicas.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: smtp-headless
+  labels:
+    app.kubernetes.io/name: mailkube-smtp-relay
+    app.kubernetes.io/component: relay
+spec:
+  type: ClusterIP
+  clusterIP: None
+  # Give each pod a DNS record as soon as it exists, so an operator can reach a
+  # replica that is still starting or is failing its probes.
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: mailkube-smtp-relay
+    app.kubernetes.io/component: relay
+  ports:
+    - name: smtp
+      protocol: TCP
+      port: 25
+      targetPort: relay-smtp

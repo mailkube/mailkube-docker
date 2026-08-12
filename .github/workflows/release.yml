@@ -1,0 +1,144 @@
+name: Release
+
+# Conventional-Commits-driven release: version bump, changelog, GitHub Release,
+# tag, then a multi-arch push to Docker Hub.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci-gate:
+    # Release only proceeds if the full gated CI (test + dry + docs) is green.
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci-gate
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write # push the version bump, the tag, and the GitHub Release
+    outputs:
+      released: ${{ steps.detect.outputs.released }}
+      version: ${{ steps.detect.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      # A tag pushed with GITHUB_TOKEN does NOT trigger other workflows (GitHub
+      # loop prevention), so a separate `on: push: tags` publish job would never
+      # fire. Comparing the newest tag before and after keeps .releaserc.json
+      # byte-identical to the other mailkube repos: no extra plugin, no PAT.
+      - name: Capture tag before release
+        id: before
+        run: echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
+
+      - name: Release (semantic-release)
+        run: >-
+          npx --yes
+          -p semantic-release
+          -p @semantic-release/changelog
+          -p @semantic-release/git
+          semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # `|| true` on both captures is required, not defensive noise: on a repo
+      # with no tags `git describe` exits 128, and Actions runs `run:` steps
+      # under `bash -e`, so the FIRST release would die on its own guard.
+      - name: Detect whether a release happened
+        id: detect
+        run: |
+          after="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          before="${{ steps.before.outputs.tag }}"
+          if [ -n "$after" ] && [ "$after" != "$before" ]; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=${after#v}" >> "$GITHUB_OUTPUT"
+            echo "released $after"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            echo "no release (tag unchanged: ${before:-none})"
+          fi
+
+  publish:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    # Must be explicit. Without it, secrets.DOCKERHUB_TOKEN resolves empty and
+    # docker/login-action fails.
+    environment: release
+    permissions:
+      contents: read
+      # OIDC for keyless cosign. Never granted by default, and its absence is
+      # only discovered after the tag has already been cut.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: v${{ needs.release.outputs.version }}
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: mailkube/smtp-relay
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.release.outputs.version }}
+            type=semver,pattern={{major}},value=v${{ needs.release.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.release.outputs.version }}
+            REVISION=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+
+      - uses: sigstore/cosign-installer@v3
+
+      # Sign the immutable digest once rather than each mutable tag: the tags
+      # all point at this digest, and `latest` will move.
+      - name: Sign the image digest
+        run: cosign sign --yes "docker.io/mailkube/smtp-relay@${{ steps.build.outputs.digest }}"
+
+      # Docker Hub renders this on the image page. It uses the Docker Hub WEB
+      # API, not registry auth, so DOCKERHUB_TOKEN must be a PAT with
+      # read/write/delete scope and the account needs Admin on the repository.
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: mailkube/smtp-relay
+          readme-filepath: ./docs/DOCKERHUB.md
+          short-description: "Companion SMTP relay: a local, durable SMTP queue that forwards to smtp.mailkube.com."

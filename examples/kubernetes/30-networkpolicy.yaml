@@ -1,0 +1,153 @@
+# =============================================================================
+#  30-networkpolicy.yaml
+#  THIS IS THE SECURITY CONTROL. Apply it.
+# =============================================================================
+#
+#  The relay's SMTP listener is UNAUTHENTICATED by design. There is no username,
+#  no password and no TLS between an application and the relay: the credential
+#  that matters lives inside the relay, and the trust boundary is the network
+#  rather than the SMTP session. Anything that can open a TCP connection to port
+#  25 on a relay pod can send mail as your verified domain, with your sending
+#  reputation and your quota.
+#
+#  The relay's own `mynetworks` allowlist is only a second line of defence, and
+#  by default it admits every private range, which is far wider than the set of
+#  pods that should be allowed to send. NetworkPolicy is the control that
+#  actually closes this. Treat it as part of the deployment, not as an optional
+#  extra.
+#
+#  -------------------------------------------------------------------------
+#  CAVEAT: some CNI plugins do not enforce NetworkPolicy at all.
+#
+#  The NetworkPolicy API is always accepted by the API server, whether or not
+#  anything implements it. A cluster running plain kubenet, Flannel without a
+#  policy plugin, or certain managed CNIs will store these objects and enforce
+#  nothing, silently. `kubectl apply` succeeding proves nothing.
+#
+#  Calico, Cilium, Antrea, Weave, AWS VPC CNI with the network policy agent
+#  enabled, and Azure CNI with the policy add-on all enforce. VERIFY: exec into
+#  a pod that should be denied and try to connect.
+#
+#      kubectl run np-test --rm -it --image=busybox --restart=Never -- \
+#          nc -vz -w 3 smtp.<namespace>.svc.cluster.local 25
+#
+#  That pod carries no mailkube.com/smtp-client label, so with enforcement it
+#  must time out. If it connects, your NetworkPolicy is decorative and you need
+#  a different control (a dedicated namespace with a service mesh policy, or
+#  sidecar mode, where the listener is only reachable on the pod's loopback).
+#  -------------------------------------------------------------------------
+#
+#  In SIDECAR mode the ingress policy is unnecessary: the listener is bound
+#  inside the pod's own network namespace, and nothing else can reach it. The
+#  egress policy still applies, because those pods make the upstream connection.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+#  1. INGRESS: only labelled application pods may submit mail.
+#
+#  Opt in per workload by adding this label to the POD template (not the
+#  Deployment's own metadata):
+#
+#      mailkube.com/smtp-client: "true"
+#
+#  Deny by default is implied: once any NetworkPolicy selects a pod, only
+#  traffic explicitly allowed by a policy reaches it.
+# -----------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mailkube-smtp-relay-ingress
+  labels:
+    app.kubernetes.io/name: mailkube-smtp-relay
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mailkube-smtp-relay
+      app.kubernetes.io/component: relay
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Same namespace only. To allow a client in another namespace, add a
+        # namespaceSelector entry here; do NOT widen the podSelector to
+        # everything and rely on mynetworks.
+        - podSelector:
+            matchLabels:
+              mailkube.com/smtp-client: "true"
+      ports:
+        # Must match the container's LISTEN_PORT, not the Service's port 25.
+        # NetworkPolicy is enforced against the pod, after Service translation.
+        - protocol: TCP
+          port: 25
+---
+# -----------------------------------------------------------------------------
+#  2. EGRESS: DNS, and the two upstream submission ports. Nothing else.
+#
+#  Selects the shared label carried by both topologies: the relay pods of the
+#  StatefulSet, and the application pods that carry a relay sidecar.
+#
+#  This is worth having even though it looks permissive. It means a compromised
+#  relay cannot reach your database, your metadata service, or anything else in
+#  the cluster; the only thing it can do with its network is talk to a mail
+#  submission port.
+# -----------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mailkube-smtp-relay-egress
+  labels:
+    app.kubernetes.io/name: mailkube-smtp-relay
+spec:
+  podSelector:
+    matchLabels:
+      mailkube.com/smtp-relay: "true"
+  policyTypes:
+    - Egress
+  egress:
+    # --- DNS -----------------------------------------------------------------
+    # Required. The upstream is reached by name, and Postfix re-resolves it as
+    # cached connections rotate. Without this rule every delivery fails with a
+    # DNS timeout, which reads like an upstream outage and is not.
+    #
+    # This targets CoreDNS in kube-system. Adjust the namespace label and the
+    # pod selector if your cluster runs DNS elsewhere; on some managed clusters
+    # the namespace has no `kubernetes.io/metadata.name` label and you must
+    # select the DNS service's pod labels directly.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # --- upstream submission -------------------------------------------------
+    # 587 (STARTTLS, the default) and 465 (implicit TLS). Port 25 is
+    # deliberately NOT allowed outbound: this relay never delivers directly to
+    # third-party mail servers, and upstream port 25 is bounce intake only.
+    #
+    # ipBlock cannot name a DNS host, so this is "the public internet minus
+    # private space". Narrowing it to the upstream's addresses is possible but
+    # brittle: they change without notice, and a stale ipBlock is an outage.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Keep cluster-internal and cloud metadata destinations out of the
+              # relay's reach. Without these exceptions, "allow the internet"
+              # also allows every pod, node and the metadata endpoint.
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports:
+        - protocol: TCP
+          port: 587
+        - protocol: TCP
+          port: 465

@@ -1,0 +1,21 @@
+# Secrets / local config
+.env
+.env.local
+*.pem
+*.key
+# Credential file the hardened Compose example asks you to create locally.
+examples/compose/hardened/secrets/
+
+# Test harness
+test/.venv/
+test/**/__pycache__/
+test/.pytest_cache/
+test/artifacts/
+.coverage
+
+# Tooling caches
+.ruff_cache/
+node_modules/
+
+# OS
+.DS_Store

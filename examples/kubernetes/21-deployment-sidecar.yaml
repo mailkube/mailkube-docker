@@ -1,0 +1,261 @@
+# =============================================================================
+#  21-deployment-sidecar.yaml
+#  Sidecar mode: one relay per application pod, reachable on 127.0.0.1:25.
+# =============================================================================
+#
+#  Choose this when a single application sends the mail, when you want the relay
+#  to share the application's lifecycle, or when your StorageClass cannot back
+#  the queue in cluster-service mode. The application connects to localhost, so
+#  there is no Service, no NetworkPolicy ingress rule to write, and no other
+#  workload can submit mail through it.
+#
+#  The trade you are making: the queue is an emptyDir. It survives a container
+#  restart, but NOT the pod being rescheduled or evicted. Anything undelivered
+#  at that moment is gone. If that is unacceptable, use
+#  20-statefulset-cluster-service.yaml instead.
+#
+#  This uses the NATIVE Kubernetes sidecar pattern (k8s >= 1.29): an
+#  initContainers entry with `restartPolicy: Always`. That is not a trick, it is
+#  the supported mechanism, and it buys three things a plain second container
+#  does not:
+#    1. The relay is started and ready BEFORE the application container starts,
+#       so the application never sends into a connection-refused window.
+#    2. On pod termination the kubelet signals the application first and the
+#       sidecar last, so the relay is still accepting while the application
+#       shuts down.
+#    3. The sidecar does not keep a Job pod alive forever.
+#
+#  -------------------------------------------------------------------------
+#  FLEET CONNECTION BUDGET, read before setting `replicas`:
+#
+#      instances x RELAY_CONCURRENCY <= 18
+#
+#  The upstream edge rejects at 20 concurrent connections PER SOURCE IP, and
+#  that source IP is your cluster's shared egress NAT address. In sidecar mode
+#  "instances" is YOUR APPLICATION'S POD COUNT, because every app pod carries a
+#  relay. The relay cannot see or validate this; it is your budget to keep.
+#
+#  With the default RELAY_CONCURRENCY=2 that is about 9 application pods per
+#  egress IP. Note that `maxSurge: 1` below adds one more pod during a rollout,
+#  so 8 replicas is the safe steady-state ceiling. Beyond that, switch to
+#  cluster-service mode, where the number of relays is decoupled from the number
+#  of application pods.
+#
+#  Watch out for an existing HorizontalPodAutoscaler on the application: in
+#  sidecar mode it silently scales the relay fleet too, and can walk your
+#  cluster straight through the connection budget under load. Cap the HPA's
+#  maxReplicas accordingly, or use cluster-service mode. Do not put an HPA on a
+#  relay workload itself: reacting to a queue backlog with more connections
+#  against a fixed budget produces upstream 4xx responses, which lengthens the
+#  backlog.
+#  -------------------------------------------------------------------------
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: your-app
+  labels:
+    app.kubernetes.io/name: your-app
+spec:
+  replicas: 3
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # One extra pod at a time, so a rollout adds one relay to the fleet rather
+      # than doubling it. A default 25% surge on a large deployment is the
+      # easiest way to blow through the connection budget above.
+      maxSurge: 1
+      maxUnavailable: 0
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: your-app
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: your-app
+        # Matched by the egress rule in 30-networkpolicy.yaml. In sidecar mode
+        # the relay lives in this pod, so it is this pod that needs egress to
+        # the submission ports.
+        mailkube.com/smtp-relay: "true"
+    spec:
+      # Spent SEQUENTIALLY across containers: the application is signalled
+      # first, and only then the sidecar. Budget for both.
+      terminationGracePeriodSeconds: 60
+
+      initContainers:
+        # ---------------------------------------------------------------------
+        #  The relay, as a native sidecar.
+        # ---------------------------------------------------------------------
+        - name: smtp-relay
+          # Pin an exact version; `latest` would let an unreviewed change to the
+          # mail path arrive on an unrelated pod restart.
+          image: mailkube/smtp-relay:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          # THIS LINE is what makes it a sidecar rather than an init container.
+          # Requires Kubernetes 1.29 or later. On an older cluster, move this
+          # entry into `containers` and accept that the application may start
+          # before the relay is listening.
+          restartPolicy: Always
+
+          ports:
+            - name: relay-smtp
+              containerPort: 25
+              protocol: TCP
+
+          # Same profile as the cluster-service manifest, verified end to end
+          # against the real image. Postfix's master needs root and refuses to
+          # run under an arbitrary UID; everything else root could do is removed.
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+                - SETGID
+                - SETUID
+                # Only needed for the privileged port 25. In sidecar mode the
+                # listener is private to the pod, so moving it to a high port
+                # costs nothing: set LISTEN_PORT=2525, point the application at
+                # 127.0.0.1:2525, and drop this capability.
+                - NET_BIND_SERVICE
+
+          env:
+            - name: SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mailkube-smtp-credential
+                  key: username
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mailkube-smtp-credential
+                  key: password
+
+            # See the fleet connection budget at the top of this file. This
+            # value is multiplied by your application's pod count.
+            - name: RELAY_CONCURRENCY
+              value: "2"
+
+            # Decorrelates synchronized cold starts across replicas.
+            - name: RELAY_START_JITTER
+              value: "15"
+
+            # Short on purpose. A sidecar shares ONE terminationGracePeriod with
+            # the application container, spent sequentially, so the drain window
+            # is whatever the application leaves behind. This is the strongest
+            # argument for cluster-service mode when queue durability matters.
+            - name: SHUTDOWN_DRAIN_TIMEOUT
+              value: "15"
+
+            # Only this pod can reach the listener, so lock the allowlist to
+            # loopback. `replace` mode always keeps loopback and nothing else
+            # when RELAY_NETWORKS is empty of other entries.
+            - name: RELAY_NETWORKS_MODE
+              value: replace
+
+          # --- probes ---------------------------------------------------------
+          # Startup: YES. Gates the application container's start, so the
+          # application never sends into a connection-refused window. Sized to
+          # cover boot plus up to 15s of RELAY_START_JITTER.
+          startupProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
+
+          # Liveness: YES. Restarts a wedged smtpd in place.
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness: DELIBERATELY ABSENT. This is a considered decision, not
+          # an omission.
+          #
+          # A restartable init container's readiness result feeds the POD's
+          # Ready condition. Adding a readinessProbe here would mean a brief
+          # relay hiccup marks the whole pod not-ready, which removes the
+          # APPLICATION from its own Service and drops user traffic. The mail
+          # relay would be taking the web tier offline.
+          #
+          # The correct blast radius for a relay problem is queued mail, not
+          # served requests. The startup probe already guarantees the relay was
+          # healthy before the application began, and the liveness probe repairs
+          # it afterwards without touching pod readiness.
+
+          # No preStop hook here, and that is also deliberate. In cluster-service
+          # mode a preStop sleep buys time for Service endpoint deregistration to
+          # win the race against SIGTERM. A sidecar has no Service endpoint, and
+          # the kubelet already defers the sidecar's SIGTERM until the
+          # application containers have exited, so the pause would be redundant
+          # and would only eat into the shared grace period.
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
+
+          volumeMounts:
+            # emptyDir queue: survives a container restart, not a rescheduling.
+            - name: relay-spool
+              mountPath: /var/spool/postfix
+            # Postfix state. Per-pod, never shared: two Postfix instances
+            # pointed at the same state directory means the second refuses to
+            # start.
+            - name: relay-data
+              mountPath: /var/lib/postfix
+            # Runtime config and the rendered credential, on tmpfs. This is what
+            # makes readOnlyRootFilesystem workable.
+            - name: relay-run
+              mountPath: /run
+            - name: relay-tmp
+              mountPath: /tmp
+
+      containers:
+        # ---------------------------------------------------------------------
+        #  Your application. Replace this entire container with your own.
+        #  The only mail configuration it needs is host 127.0.0.1, port 25, no
+        #  authentication, no TLS.
+        # ---------------------------------------------------------------------
+        - name: app
+          image: registry.example.com/your-app:1.4.2
+          env:
+            - name: SMTP_HOST
+              value: 127.0.0.1
+            - name: SMTP_PORT
+              value: "25"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+
+      volumes:
+        - name: relay-spool
+          emptyDir: {}
+        - name: relay-data
+          emptyDir: {}
+        - name: relay-run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: relay-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi

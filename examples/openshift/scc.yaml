@@ -1,0 +1,107 @@
+# =============================================================================
+#  scc.yaml
+#  A custom SecurityContextConstraints for mailkube/smtp-relay on OpenShift.
+# =============================================================================
+#
+#  WHY THIS EXISTS: OpenShift's default `restricted-v2` SCC assigns every pod a
+#  random UID from the namespace's range and forbids running as root. Postfix
+#  will not start under it. Its master needs root, and postfix-script refuses to
+#  run under a UID it does not recognize. There is no workaround inside the
+#  image; see README.md in this directory for the full explanation.
+#
+#  This SCC is deliberately narrow. It grants exactly two things beyond
+#  restricted-v2: an arbitrary (including root) UID, and the six capabilities
+#  Postfix actually uses. Everything else stays denied: no privileged
+#  containers, no host network, no host PID or IPC, no host paths, no host
+#  ports, and no privilege escalation.
+#
+#  Apply, then bind it to the relay's ServiceAccount ONLY (never to a group,
+#  never to `system:authenticated`):
+#
+#      oc apply -f scc.yaml
+#      oc create serviceaccount mailkube-smtp-relay
+#      oc adm policy add-scc-to-user mailkube-smtp-relay \
+#          -z mailkube-smtp-relay -n <namespace>
+#
+#  Then set `serviceAccountName: mailkube-smtp-relay` on the workload from
+#  ../kubernetes/. Those manifests need no other change: their securityContext
+#  is already the minimum this SCC permits.
+# =============================================================================
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: mailkube-smtp-relay
+  annotations:
+    kubernetes.io/description: >-
+      Allows the mailkube/smtp-relay Postfix container to run as root with the
+      six capabilities Postfix requires. Grant to the relay's ServiceAccount
+      only. Everything beyond an arbitrary UID and those capabilities is denied.
+
+# Ranked below restricted-v2 so it is never selected implicitly. A workload gets
+# it only through an explicit ServiceAccount binding.
+priority: null
+
+# --- what is allowed ----------------------------------------------------------
+runAsUser:
+  # Postfix's master needs root; postfix-script rejects an arbitrary UID. This is
+  # the concession that makes the image run at all.
+  type: RunAsAny
+
+allowedCapabilities:
+  # CHOWN, DAC_OVERRIDE, FOWNER  normalize queue and state directory ownership
+  #                             and modes at boot (volume roots arrive 0777)
+  # SETGID, SETUID              master drops to the postfix user per daemon
+  # NET_BIND_SERVICE            binds port 25; drop it by setting LISTEN_PORT
+  #                             above 1024
+  - CHOWN
+  - DAC_OVERRIDE
+  - FOWNER
+  - SETGID
+  - SETUID
+  - NET_BIND_SERVICE
+
+requiredDropCapabilities:
+  # The container adds back only what it lists explicitly.
+  - ALL
+
+defaultAddCapabilities: null
+
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+seLinuxContext:
+  type: MustRunAs
+
+seccompProfiles:
+  - runtime/default
+
+# --- what stays denied --------------------------------------------------------
+allowPrivilegedContainer: false
+# Equivalent to no-new-privileges. Verified compatible with this image: the
+# graceful queue drain still works, because the process is root with
+# DAC_OVERRIDE and does not depend on the setgid bit on postqueue/postdrop.
+allowPrivilegeEscalation: false
+allowHostDirVolumePlugin: false
+allowHostNetwork: false
+allowHostIPC: false
+allowHostPID: false
+allowHostPorts: false
+
+# Permissive rather than enforcing, so the same SCC covers both the hardened
+# manifests (which set readOnlyRootFilesystem: true themselves) and a debugging
+# run that needs a writable layer.
+readOnlyRootFilesystem: false
+
+# Bind through `oc adm policy add-scc-to-user -z <serviceaccount>` instead of
+# listing subjects here, so the grant lives with the workload's namespace.
+users: []
+groups: []

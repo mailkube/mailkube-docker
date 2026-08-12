@@ -1,0 +1,70 @@
+# =============================================================================
+#  mailkube/smtp-relay  --  Postfix master process configuration
+# =============================================================================
+#
+#  Derived from Alpine's stock master.cf with two deliberate changes:
+#
+#    1. tlsproxy is ENABLED (stock ships it commented out). It is REQUIRED by
+#       smtp_tls_connection_reuse = yes in main.cf: Postfix routes reused TLS
+#       sessions through tlsproxy(8), and without this line connection reuse
+#       silently does not happen and every message pays a fresh AUTH.
+#
+#    2. chroot stays `n` on every service (column 5). This is not cosmetic:
+#       a chrooted smtp(8) cannot read /etc/hosts, which breaks
+#       smtp_host_lookup = native and therefore the integration-test seam; a
+#       chrooted tlsproxy(8) cannot read /etc/ssl/certs, which breaks
+#       smtp_tls_security_level = secure. It also removes any need for
+#       CAP_SYS_CHROOT in the container's capability set.
+#
+#  The `smtp inet` line below is rewritten by the entrypoint when LISTEN_PORT
+#  is not 25. It is REPLACED, never supplemented: leaving a port-25 listener in
+#  place would fail to bind without NET_BIND_SERVICE and defeat the purpose of
+#  choosing a high port.
+#
+#  Services are otherwise kept at stock. local/virtual/lmtp can never be invoked
+#  (mydestination is empty and local_transport is an error: transport), but
+#  master spawns services on demand, so leaving them defined costs nothing at
+#  runtime and keeps the diff from upstream reviewable.
+#
+# ==========================================================================
+# service      type  private unpriv  chroot  wakeup  maxproc  command + args
+#                    (yes)   (yes)   (n)     (never) (100)
+# ==========================================================================
+smtp       inet  n       -       n       -       -       smtpd
+pickup     unix  n       -       n       60      1       pickup
+cleanup    unix  n       -       n       -       0       cleanup
+qmgr       unix  n       -       n       300     1       qmgr
+tlsmgr     unix  -       -       n       1000?   1       tlsmgr
+rewrite    unix  -       -       n       -       -       trivial-rewrite
+bounce     unix  -       -       n       -       0       bounce
+defer      unix  -       -       n       -       0       bounce
+trace      unix  -       -       n       -       0       bounce
+verify     unix  -       -       n       -       1       verify
+flush      unix  n       -       n       1000?   0       flush
+proxymap   unix  -       -       n       -       -       proxymap
+proxywrite unix  -       -       n       -       1       proxymap
+
+# REQUIRED for smtp_tls_connection_reuse = yes. Stock ships this commented out.
+tlsproxy   unix  -       -       n       -       0       tlsproxy
+
+smtp       unix  -       -       n       -       -       smtp
+relay      unix  -       -       n       -       -       smtp
+	-o syslog_name=${multi_instance_name?{$multi_instance_name}:{postfix}}/$service_name
+showq      unix  n       -       n       -       -       showq
+error      unix  -       -       n       -       -       error
+retry      unix  -       -       n       -       -       error
+
+# Target of the null-sender transport map that suppresses DSNs when
+# BOUNCE_RECIPIENT is unset. Asserted present at build time.
+discard    unix  -       -       n       -       -       discard
+
+local      unix  -       n       n       -       -       local
+virtual    unix  -       n       n       -       -       virtual
+lmtp       unix  -       -       n       -       -       lmtp
+anvil      unix  -       -       n       -       1       anvil
+
+# Shared connection cache. Holds the reused, authenticated TLS sessions.
+scache     unix  -       -       n       -       1       scache
+
+# Required for maillog_file = /dev/stdout.
+postlog    unix-dgram n  -       n       -       1       postlogd

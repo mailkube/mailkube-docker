@@ -1,0 +1,121 @@
+# =============================================================================
+#  40-servicemonitor.yaml
+#  OPTIONAL. Prometheus Operator scrape configuration for a queue exporter
+#  sidecar. Requires the Prometheus Operator CRDs; skip this file entirely if
+#  you scrape by annotation or do not run Prometheus.
+# =============================================================================
+#
+#  The relay itself exposes no metrics endpoint on purpose: it is a Postfix null
+#  client, and per-message delivery outcomes belong in the Mailkube sending log
+#  and in webhooks, which see the whole platform rather than this one hop. What
+#  is genuinely local, and genuinely worth alerting on, is the QUEUE.
+#
+#  The metrics that matter:
+#      postfix_showq_message_age_seconds   queue backlog age. A rising value is
+#                                          the earliest signal of a bad
+#                                          credential or an upstream problem.
+#      postfix_up                          exporter scrape health.
+#
+#  Also alert on the fixed-shape log line the relay emits when a shutdown drain
+#  does not complete, which means messages were left behind by a rollout:
+#      mailkube-relay: drain-incomplete undelivered=<n> timeout=<n>s
+#
+#  -------------------------------------------------------------------------
+#  STEP 1: add the exporter sidecar to the relay pod.
+#
+#  In 20-statefulset-cluster-service.yaml, add this to `containers:` and nothing
+#  else changes. It reads the queue through Postfix's showq socket in the shared
+#  spool volume.
+#
+#      - name: postfix-exporter
+#        # Pin it. Current tags: https://github.com/hsn723/postfix_exporter/releases
+#        image: ghcr.io/hsn723/postfix_exporter:v0.20.4
+#        args:
+#          - --web.listen-address=:9154
+#          - --postfix.showq_path=/var/spool/postfix/public/showq
+#          # This relay logs to stdout, so there is no mail log file to tail.
+#          - --postfix.logfile_path=/dev/null
+#        ports:
+#          - name: metrics
+#            containerPort: 9154
+#        securityContext:
+#          # Postfix's public/ directory is mode 0710, owned root:postdrop
+#          # (gid 102). The exporter must be in that group to reach the socket.
+#          runAsUser: 65534
+#          runAsGroup: 102
+#          runAsNonRoot: true
+#          readOnlyRootFilesystem: true
+#          allowPrivilegeEscalation: false
+#          capabilities:
+#            drop: [ALL]
+#        resources:
+#          requests:
+#            cpu: 10m
+#            memory: 32Mi
+#          limits:
+#            memory: 64Mi
+#        volumeMounts:
+#          # showq is a request/response socket, so this cannot be read-only.
+#          - name: spool
+#            mountPath: /var/spool/postfix
+#
+#  STEP 2: apply this file.
+#  -------------------------------------------------------------------------
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+#  A separate Service for the metrics port.
+#
+#  Kept apart from the `smtp` Service in 10-service.yaml so that the mail path
+#  and the observability path have independent lifetimes: deleting or restricting
+#  metrics never touches the Service applications send through.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailkube-smtp-relay-metrics
+  labels:
+    app.kubernetes.io/name: mailkube-smtp-relay
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  # Headless: the ServiceMonitor scrapes each pod individually, so a stable
+  # virtual IP would only get in the way by load-balancing scrapes across
+  # replicas and mixing their queues into one time series.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mailkube-smtp-relay
+    app.kubernetes.io/component: relay
+  ports:
+    - name: metrics
+      protocol: TCP
+      port: 9154
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mailkube-smtp-relay
+  labels:
+    app.kubernetes.io/name: mailkube-smtp-relay
+    # Your Prometheus instance selects ServiceMonitors by label. With the
+    # kube-prometheus-stack chart that is usually `release: <helm-release-name>`.
+    # A ServiceMonitor with the wrong label here is accepted by the API server
+    # and then quietly ignored, which looks exactly like a broken exporter.
+    # release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mailkube-smtp-relay
+      app.kubernetes.io/component: metrics
+  namespaceSelector:
+    matchNames:
+      # Replace with the namespace the relay runs in.
+      - default
+  endpoints:
+    - port: metrics
+      path: /metrics
+      # A mail queue is a slow-moving quantity. 30s is plenty and keeps the
+      # cardinality and scrape cost negligible.
+      interval: 30s
+      scrapeTimeout: 10s

@@ -1,0 +1,310 @@
+# =============================================================================
+#  20-statefulset-cluster-service.yaml
+#  Cluster-service mode: a small pool of relay pods, shared by every application
+#  in the namespace, each with its own durable queue.
+# =============================================================================
+#
+#  Choose this over sidecar mode when you want the queue to survive a pod
+#  rescheduling, when several applications send mail, or when you want one place
+#  to inspect and drain. It is a StatefulSet rather than a Deployment for
+#  exactly one reason: each replica needs its OWN persistent queue, and only
+#  volumeClaimTemplates gives you that.
+#
+#  -------------------------------------------------------------------------
+#  FLEET CONNECTION BUDGET, read before changing `replicas`:
+#
+#      instances x RELAY_CONCURRENCY <= 18
+#
+#  The upstream edge rejects at 20 concurrent connections PER SOURCE IP, and
+#  that source IP is your cluster's shared egress NAT address, not the pod IP.
+#  Every replica, plus anything else sending from behind the same NAT, spends
+#  from the same 20. With the default RELAY_CONCURRENCY=2 the ceiling is 9
+#  replicas. Two replicas, as configured below, is the right starting point for
+#  almost everyone: throughput here is round-trip bound, not connection bound.
+#
+#  DO NOT put a HorizontalPodAutoscaler on this workload. An HPA reacts to a
+#  queue backlog by adding replicas, which spends more connections against a
+#  fixed budget, which produces upstream 4xx responses, which lengthens the
+#  backlog. That is a positive feedback loop ending in risk signals and an IP
+#  ban. If the queue is growing, the fix is upstream capacity or your sending
+#  rate, never more relays.
+#
+#  Rollouts: a StatefulSet's RollingUpdate replaces one pod at a time, which is
+#  what you want, so there is nothing to set here. (The equivalent knob when you
+#  run the relay inside a Deployment is maxSurge: 1, as in
+#  21-deployment-sidecar.yaml. Never let a rollout double the fleet.)
+#  -------------------------------------------------------------------------
+#
+#  -------------------------------------------------------------------------
+#  PVC CAVEAT, this one bites:
+#
+#  Postfix's queue directory contains UNIX DOMAIN SOCKETS (private/ and
+#  public/), and its subdirectories carry setgid bits. Your StorageClass must
+#  support both. Block-backed ReadWriteOnce volumes (EBS, PD, Ceph RBD, most
+#  local-path provisioners) are fine. Several NFS and object-backed CSI drivers
+#  are NOT: they cannot create a socket in the volume, and Postfix fails at
+#  startup with an error about being unable to create private/<service>.
+#
+#  Prefer a block-backed RWO StorageClass. If you are stuck with NFS, the
+#  sidecar pattern with an emptyDir queue (21-deployment-sidecar.yaml) is the
+#  better trade: you lose queue durability across rescheduling, but you do not
+#  get a relay that will not start.
+#  -------------------------------------------------------------------------
+# =============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mailkube-smtp-relay
+  labels:
+    app.kubernetes.io/name: mailkube-smtp-relay
+    app.kubernetes.io/component: relay
+spec:
+  # The headless Service from 10-service.yaml. Gives each replica a stable DNS
+  # name for operator access to a specific queue.
+  serviceName: smtp-headless
+
+  # See the fleet connection budget above before raising this.
+  replicas: 2
+
+  # Ordered startup buys nothing here (replicas are independent) and makes a
+  # rollout as slow as the sum of the pods' start jitter.
+  podManagementPolicy: Parallel
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mailkube-smtp-relay
+      app.kubernetes.io/component: relay
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mailkube-smtp-relay
+        app.kubernetes.io/component: relay
+        # Matched by the egress rule in 30-networkpolicy.yaml. The same label is
+        # applied to sidecar-mode pods, so one egress policy covers both
+        # topologies.
+        mailkube.com/smtp-relay: "true"
+    spec:
+      # The queue drain on SIGTERM needs room: preStop sleep (5s) plus
+      # SHUTDOWN_DRAIN_TIMEOUT (20s) plus slack. Too short a grace period turns
+      # every rollout into a SIGKILL with mail still in flight.
+      terminationGracePeriodSeconds: 60
+
+      # Spread replicas across nodes so a single node failure does not take the
+      # whole relay pool, and each replica's PVC lands in a different zone's
+      # failure domain.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: mailkube-smtp-relay
+
+      securityContext:
+        # Postfix's master runs as root and drops to the postfix user for every
+        # daemon it spawns. postfix-script explicitly refuses to run under an
+        # arbitrary UID, so runAsNonRoot is not achievable for this image. What
+        # the container-level context below does instead is remove everything
+        # root would otherwise be able to do.
+        runAsUser: 0
+        runAsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: relay
+          # Pin an exact version. `latest` in the component every outgoing
+          # message passes through means an unreviewed mail-path change can
+          # arrive on an unrelated pod restart.
+          image: mailkube/smtp-relay:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            # The Service targets this by NAME. To move the relay to a high
+            # port, set LISTEN_PORT and change this number; 10-service.yaml
+            # keeps serving applications on 25 either way.
+            - name: relay-smtp
+              containerPort: 25
+              protocol: TCP
+
+          # This exact profile was verified end to end against the real image:
+          # it boots, authenticates, delivers, and drains its queue on shutdown.
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                # Queue and state directory ownership and modes. Kubernetes
+                # creates emptyDir volumes 0777 and most CSI provisioners create
+                # PV roots 0777; Postfix rejects a group- or other-writable
+                # queue directory, so the entrypoint normalizes them at boot.
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+                # master drops privilege to the postfix user for each daemon.
+                - SETGID
+                - SETUID
+                # Binds the privileged port 25. Drop this one too if you set
+                # LISTEN_PORT to a port above 1024.
+                - NET_BIND_SERVICE
+
+          env:
+            - name: SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mailkube-smtp-credential
+                  key: username
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mailkube-smtp-credential
+                  key: password
+
+            # See the fleet connection budget at the top of this file.
+            - name: RELAY_CONCURRENCY
+              value: "2"
+
+            # Decorrelates synchronized cold starts. Without it, all replicas
+            # restarting together open their first connections in the same
+            # second and can trip the per-domain AUTH rate limit, which emits
+            # risk signals against your shared egress IP. The startupProbe below
+            # is sized to cover this.
+            - name: RELAY_START_JITTER
+              value: "15"
+
+            # Must stay below terminationGracePeriodSeconds minus the preStop
+            # sleep.
+            - name: SHUTDOWN_DRAIN_TIMEOUT
+              value: "20"
+
+            # Tighten this to your application's pod CIDR and switch to
+            # RELAY_NETWORKS_MODE=replace once you know it. The defaults admit
+            # every private range, which is wider than your pod network.
+            # - name: RELAY_NETWORKS_MODE
+            #   value: replace
+            # - name: RELAY_NETWORKS
+            #   value: 10.42.0.0/16
+
+          # --- probes ---------------------------------------------------------
+          # kubelet does NOT consume the image's OCI HEALTHCHECK directive, so
+          # all three probes are declared here. They run the same script the
+          # image ships: a real SMTP probe that connects, waits for the 220
+          # banner and quits. A process check would report healthy during the
+          # window in which master is up but smtpd is not yet accepting.
+          #
+          # The script reads LISTEN_PORT from the environment, so it follows a
+          # non-default ingress port without editing anything here.
+
+          # Startup: covers the config copy, mount normalization, preflight and
+          # up to 15s of start jitter, with generous headroom. Its existence is
+          # what lets the liveness probe below be aggressive without killing a
+          # pod that is merely still starting.
+          startupProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
+
+          # Readiness: gates Service membership. A relay that is not accepting
+          # SMTP must not receive connections; the other replica takes them.
+          readinessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Liveness: restarts a wedged smtpd. Deliberately slower and more
+          # tolerant than readiness, because a restart discards nothing (the
+          # queue is on the PVC) but it does interrupt an in-flight drain.
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          lifecycle:
+            preStop:
+              exec:
+                # Endpoint removal and SIGTERM are dispatched concurrently by
+                # Kubernetes, so without this pause a client can open a
+                # connection to a pod that has already begun draining. Postfix
+                # has no "stop accepting but keep delivering" mode, so losing
+                # that race means a message arrives mid-drain. Sleeping here
+                # lets endpoint deregistration propagate first.
+                command: ["/bin/sh", "-c", "sleep 5"]
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              # No CPU limit on purpose: throttling a mail queue during a drain
+              # is how a rollout turns into lost delivery attempts.
+              memory: 192Mi
+
+          volumeMounts:
+            # The durable queue, one PVC per replica. See the PVC caveat above.
+            - name: spool
+              mountPath: /var/spool/postfix
+
+            # Postfix state (TLS session cache). PER-POD emptyDir, and it MUST
+            # stay that way.
+            #
+            # NEVER put this in volumeClaimTemplates with a shared access mode,
+            # and never point two pods at the same volume. Postfix detects
+            # another instance's state and refuses to start. The contents are
+            # a performance cache only: losing them costs one full TLS handshake
+            # after a restart, which is why an emptyDir is the correct choice
+            # rather than a compromise.
+            - name: data
+              mountPath: /var/lib/postfix
+
+            # Runtime configuration directory. The image copies its Postfix
+            # configuration here at boot and renders the credential here, which
+            # is what allows readOnlyRootFilesystem above and keeps the
+            # credential off any disk-backed layer.
+            - name: run
+              mountPath: /run
+
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi
+
+  volumeClaimTemplates:
+    # The queue, and ONLY the queue. /var/lib/postfix is deliberately absent
+    # from this list; see the volumeMounts comment above.
+    - metadata:
+        name: spool
+        labels:
+          app.kubernetes.io/name: mailkube-smtp-relay
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        # Set your block-backed StorageClass here. Leaving it unset uses the
+        # cluster default, which on some clusters is NFS-backed and will not
+        # support the UNIX domain sockets Postfix creates in this directory.
+        # storageClassName: gp3
+        resources:
+          requests:
+            # A mail queue is small: this is headroom for a multi-hour upstream
+            # outage at a normal sending rate, not a sizing target.
+            storage: 2Gi

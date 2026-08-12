@@ -1,0 +1,13 @@
+# hadolint configuration.
+ignored:
+  # DL3018 (pin apk versions): deliberately waived.
+  #
+  # The base image is pinned by DIGEST, which already fixes the Alpine release
+  # and therefore the package repository snapshot. Pinning individual apk
+  # versions on top of that makes builds fail the moment Alpine supersedes a
+  # package on a security update, because apk repositories do not retain
+  # superseded versions. Digest-pinned base + floating patch versions is the
+  # combination that gets reproducible builds AND security updates.
+  # Dependabot bumps the base digest; see .github/dependabot.yml.
+  - DL3018
+failure-threshold: warning

@@ -1,0 +1,12 @@
+# NOTE: the dialect is deliberately NOT set here.
+#
+# The two shell trees in this repo have different dialects:
+#   rootfs/**   runs on BusyBox ash and is linted with an explicit --shell=dash
+#   scripts/**  is bash and must be linted as bash
+#
+# Setting `shell=dash` globally would report SC3010/SC3024/SC3011 against every
+# legitimate bashism in scripts/. CI passes --shell=dash only for rootfs; see
+# .github/workflows/ci.yml and .rules/ENTRYPOINT.md for why that flag is
+# load-bearing there (it is what suppresses SC3040 for the pipefail BusyBox ash
+# actually supports).
+external-sources=true

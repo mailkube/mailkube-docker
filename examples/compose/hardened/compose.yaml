@@ -1,0 +1,123 @@
+# =============================================================================
+#  Example: hardened
+#  Read-only root filesystem, minimal capabilities, no privilege escalation,
+#  a closed ingress allowlist, and the credential delivered as a file.
+# =============================================================================
+#
+#  This exact combination was verified end to end against the real image: the
+#  relay boots, authenticates, delivers, and drains its queue on shutdown under
+#  every restriction below. It is not a theoretical hardening profile.
+#
+#  Setup:
+#      mkdir -p secrets
+#      printf '%s' 'your-smtp-credential-secret' > secrets/smtp_password
+#      chmod 600 secrets/smtp_password
+#      export SMTP_USERNAME=myapp01@example.com
+#      docker compose up -d
+#
+#  Note `printf '%s'` rather than `echo`. The relay strips a trailing newline,
+#  but most other tools in this ecosystem do not, and an invisible newline in a
+#  credential file is the single most common cause of a mysterious 535.
+#
+#  Why the relay still runs as root: Postfix's master needs it, and
+#  postfix-script refuses to run under an arbitrary UID. What the profile takes
+#  away instead is everything root would normally be able to do beyond the six
+#  capabilities Postfix actually uses, plus the ability to write anywhere except
+#  the queue, its state directory, and two tmpfs mounts.
+#
+#  Fleet connection budget: instances x RELAY_CONCURRENCY <= 18, because the
+#  upstream edge rejects at 20 concurrent connections per source IP, which is
+#  your host's shared egress address.
+# =============================================================================
+
+services:
+  smtp-relay:
+    image: mailkube/smtp-relay:latest  # Always pin a version
+    container_name: mailkube-smtp-relay
+    restart: unless-stopped
+
+    # --- filesystem ---------------------------------------------------------
+    # The image copies its Postfix configuration into /run/postfix at boot
+    # (Postfix's own multi-instance mechanism) precisely so that / can stay
+    # read-only and the credential lands on tmpfs rather than in a disk-backed
+    # layer.
+    read_only: true
+    tmpfs:
+      # Runtime configuration and the rendered credential.
+      - /run
+      # Postfix scratch space.
+      - /tmp
+    volumes:
+      # The only two writable, persistent paths.
+      - relay-spool:/var/spool/postfix
+      - relay-data:/var/lib/postfix
+
+    # --- privileges ---------------------------------------------------------
+    # Exactly the six capabilities Postfix needs, nothing else:
+    #   CHOWN, DAC_OVERRIDE, FOWNER  queue and state directory ownership and
+    #                                modes, normalized at every boot because
+    #                                orchestrators create volume roots 0777
+    #   SETGID, SETUID               master drops to the postfix user for
+    #                                every daemon it spawns
+    #   NET_BIND_SERVICE             binds the privileged port 25. Drop this one
+    #                                too if you set LISTEN_PORT to a high port.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    security_opt:
+      # postqueue and postdrop are setgid postdrop binaries, and this flag makes
+      # the kernel ignore their setgid bit. Verified to be harmless here:
+      # the process is root with DAC_OVERRIDE, so the graceful queue drain on
+      # shutdown still works.
+      - no-new-privileges:true
+
+    # --- configuration ------------------------------------------------------
+    environment:
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      # Read from the mounted secret rather than the process environment, so the
+      # value never appears in `docker inspect` or in a crash dump.
+      SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+
+      # Non-default posture: ONLY the CIDR below (plus loopback, always) may
+      # submit mail. In the default `append` mode the built-in private-range
+      # defaults would admit anything on any RFC1918 network that can route
+      # here, which is far wider than this one compose network.
+      RELAY_NETWORKS_MODE: replace
+      RELAY_NETWORKS: 172.28.5.0/24
+
+    secrets:
+      # Compose bind-mounts this at /run/secrets/smtp_password, on top of the
+      # /run tmpfs above. Mounts are applied shortest-path-first, so the tmpfs
+      # is in place before the secret lands inside it.
+      - smtp_password
+
+    # The image ships its own HEALTHCHECK; nothing to restate here.
+    stop_grace_period: 60s
+
+    networks:
+      - mailkube
+
+secrets:
+  smtp_password:
+    # Create this file yourself; it is deliberately not in the repository.
+    file: ./secrets/smtp_password
+
+volumes:
+  relay-spool:
+  relay-data:
+
+networks:
+  mailkube:
+    driver: bridge
+    ipam:
+      config:
+        # Pinned so RELAY_NETWORKS above names a real, stable range. Without a
+        # fixed subnet, Docker picks one at creation time and the allowlist
+        # would be wrong on another host.
+        - subnet: 172.28.5.0/24

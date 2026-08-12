@@ -1,0 +1,87 @@
+# =============================================================================
+#  Example: with-metrics
+#  The basic relay plus a Prometheus exporter sidecar for the mail queue.
+# =============================================================================
+#
+#  Scrape target:   http://127.0.0.1:9154/metrics   (published to loopback only)
+#  Inside the compose network:  http://postfix-exporter:9154/metrics
+#
+#  The metrics worth alerting on:
+#      postfix_showq_message_age_seconds   queue backlog age. A rising value is
+#                                          the earliest signal of an upstream
+#                                          problem or a bad credential.
+#      postfix_up                          exporter's own scrape health.
+#
+#  Also alert on the container log line the relay emits when a shutdown drain
+#  does not finish:
+#      mailkube-relay: drain-incomplete undelivered=<n> timeout=<n>s
+#
+#  Scope limit, stated plainly: this relay logs to stdout in container-native
+#  fashion, so the exporter's LOG-derived metrics (delivery counts, SMTP status
+#  codes) are not available here. Only the queue metrics are. Per-message
+#  delivery outcomes belong in the Mailkube sending log and in webhooks, which
+#  see the whole platform rather than this one hop.
+#
+#  Fleet connection budget: instances x RELAY_CONCURRENCY <= 18. The upstream
+#  edge rejects at 20 concurrent connections per source IP, shared by every
+#  instance behind your egress address.
+# =============================================================================
+
+services:
+  smtp-relay:
+    image: mailkube/smtp-relay:latest  # Always pin a version
+    container_name: mailkube-smtp-relay
+    restart: unless-stopped
+    environment:
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+    volumes:
+      - relay-spool:/var/spool/postfix
+      - relay-data:/var/lib/postfix
+    # The image ships its own HEALTHCHECK, which is what the exporter's
+    # `depends_on: condition: service_healthy` below waits on.
+    stop_grace_period: 60s
+    networks:
+      - mailkube
+
+  postfix-exporter:
+    # Pin the exporter too. Check the current tag at
+    # https://github.com/hsn723/postfix_exporter/releases (the registry publishes
+    # both `v`-prefixed and bare version tags; use whichever that repo lists).
+    image: ghcr.io/hsn723/postfix_exporter:v0.20.4
+    container_name: mailkube-postfix-exporter
+    restart: unless-stopped
+    command:
+      - --web.listen-address=:9154
+      # The showq socket lives in the relay's spool directory, which is why the
+      # spool volume is mounted here read-write. showq is a request/response
+      # socket, so read-write is required even though the exporter only reads
+      # queue information.
+      - --postfix.showq_path=/var/spool/postfix/public/showq
+      # This relay logs to stdout, so there is no mail log file to tail. Point
+      # the exporter at an empty file rather than letting it fail on the
+      # /var/log/mail.log default.
+      - --postfix.logfile_path=/dev/null
+    # Postfix's public/ directory is mode 0710, owned root:postdrop (gid 102).
+    # The exporter has to be in that group to traverse it and reach the socket.
+    # A non-root uid plus the postdrop gid is the minimum that works.
+    user: "65534:102"
+    volumes:
+      - relay-spool:/var/spool/postfix
+    ports:
+      # Loopback only. Metrics are an internal surface; expose them to your
+      # Prometheus over a private network, never on 0.0.0.0.
+      - "127.0.0.1:9154:9154"
+    depends_on:
+      smtp-relay:
+        condition: service_healthy
+    networks:
+      - mailkube
+
+volumes:
+  relay-spool:
+  relay-data:
+
+networks:
+  mailkube:
+    driver: bridge

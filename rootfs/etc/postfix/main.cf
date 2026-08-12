@@ -1,0 +1,283 @@
+# =============================================================================
+#  mailkube/smtp-relay  --  Postfix null-client relay to smtp.mailkube.com
+# =============================================================================
+#
+#  This file is the SOURCE OF TRUTH for every value that does not depend on the
+#  environment. Values that DO depend on the environment (relayhost port,
+#  mynetworks, identity, size/rate caps, bounce posture) are applied by
+#  docker-entrypoint.sh with a SINGLE batched `postconf -e` call against the
+#  runtime config directory.
+#
+#  Why `postconf -e` and not an appended overlay: Postfix honours the last
+#  definition of a parameter, but dict_load_fp() emits
+#  "overriding earlier entry: <name>=<value>" to stderr for every duplicate.
+#  Those warnings land on exactly the parameters an overlay exists to override,
+#  and the boot preflight treats them as fatal. `postconf -e` edits in place,
+#  preserves these comments, and produces no duplicates.
+#
+#  DO NOT edit values here without reading .rules/POSTFIX_TUNING.md. Every
+#  number below defends a specific, verified upstream limit.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+#  Directories
+# -----------------------------------------------------------------------------
+queue_directory = /var/spool/postfix
+data_directory  = /var/lib/postfix
+
+# -----------------------------------------------------------------------------
+#  Logging -- container-native, to stdout via postlogd(8)
+# -----------------------------------------------------------------------------
+maillog_file = /dev/stdout
+
+# -----------------------------------------------------------------------------
+#  IMMUTABLE UPSTREAM BLOCK
+#
+#  smtp.mailkube.com is a literal. There is no environment variable, no build
+#  ARG, and no override path. Changing it requires editing this file.
+#
+#  The [brackets] are load-bearing twice over:
+#    1. They suppress the MX lookup, so this is a plain A/AAAA resolution. That
+#       is what makes musl (Alpine) a non-issue for this workload.
+#    2. smtp_tls_security_level=secure matches the certificate against the
+#       nexthop, which the brackets pin to exactly this name.
+#
+#  Only the PORT is templated at runtime, to 587 (STARTTLS) or 465 (implicit
+#  TLS). Nothing else. Upstream port 25 is bounce/DSN intake only: relaying
+#  there fires risk signal 100 and TCP-bans the source IP.
+# -----------------------------------------------------------------------------
+relayhost = [smtp.mailkube.com]:587
+
+# Evaluated by trivial-rewrite BEFORE relayhost. Pinned empty so it can never
+# become an unguarded redirection vector (a `static:` value needs no file and
+# would silently win over relayhost above).
+sender_dependent_relayhost_maps =
+
+# -----------------------------------------------------------------------------
+#  TLS to the relay host
+# -----------------------------------------------------------------------------
+#  `secure` = mandatory TLS + certificate verification + the name must match the
+#  nexthop. The deprecated `smtp_use_tls = yes` this replaces means OPPORTUNISTIC
+#  TLS on port 587, under which a STARTTLS-stripping MITM harvests the SMTP
+#  credential in cleartext.
+smtp_tls_security_level        = secure
+smtp_tls_mandatory_protocols   = >=TLSv1.2
+smtp_tls_protocols             = >=TLSv1.2
+smtp_tls_mandatory_ciphers     = high
+
+#  Both are set. CApath is also the test seam: the harness bind-mounts a single
+#  hashed CA file into /etc/ssl/certs/<hash>.0, which is plain OpenSSL trust
+#  store behaviour and requires no test-only code path and no override variable.
+smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+smtp_tls_CApath = /etc/ssl/certs
+
+smtp_tls_session_cache_database = lmdb:$data_directory/smtp_scache
+smtp_tls_loglevel               = 1
+
+# -----------------------------------------------------------------------------
+#  SASL -- AUTH PLAIN only
+# -----------------------------------------------------------------------------
+smtp_sasl_auth_enable = yes
+
+#  *** THE MOST IMPORTANT LINE IN THIS FILE ***
+#  The Postfix SMTP CLIENT default is `noplaintext, noanonymous`, which forbids
+#  PLAIN both inside and outside TLS. This is the opposite of the server-side
+#  default and catches everyone. Because smtp_tls_security_level=secure verifies
+#  the certificate, the setting actually in force is
+#  smtp_sasl_tls_verified_security_options, which inherits from
+#  smtp_sasl_tls_security_options, which inherits from this parameter.
+#  Omitting this line fails EVERY delivery with "no worthy mechs found".
+smtp_sasl_security_options = noanonymous
+
+#  Intersects the server's offered mechanism list down to PLAIN. Note this is
+#  intersection only, never additive: it cannot re-enable what the line above
+#  forbids. Upstream registers only smtp_server_auth_plain, and passwords are
+#  hashed at rest, so CRAM-MD5 is structurally impossible there.
+smtp_sasl_mechanism_filter = plain
+
+#  texthash needs no postmap and writes no .lmdb sidecar. Combined with the
+#  credential living under /run (tmpfs), it never touches a disk-backed layer.
+smtp_sasl_password_maps = texthash:/run/postfix/sasl_passwd
+
+#  A 535 defers instead of bouncing. A typo'd secret then costs a stalled queue
+#  you can fix, rather than a mailbox of bounces and permanently lost mail.
+smtp_sasl_auth_soft_bounce = yes
+
+#  smtp_sasl_auth_cache_name is DELIBERATELY NOT SET. See .rules/POSTFIX_TUNING.md.
+#  Two reasons: (1) it must be `proxy:`-prefixed or smtp(8) msg_fatal()s on every
+#  start, and `postfix check` cannot see that; (2) Postfix caches on the 535 REPLY
+#  CODE, and upstream returns 535 for any API transport error, so a brief API blip
+#  would stop this pod attempting AUTH at all while it still reports healthy.
+
+# -----------------------------------------------------------------------------
+#  Connection reuse -- how the 2 AUTH/sec-per-domain budget is respected
+# -----------------------------------------------------------------------------
+#  Without reuse, every message costs a fresh TCP + TLS handshake + AUTH.
+#
+#  REQUIRED and easily missed: every delivery here is TLS, and Postfix does NOT
+#  hand a TLS session to scache(8) unless this is explicitly enabled. Its default
+#  is `no`, which makes all four parameters below silently inert. Enabling it
+#  also requires the tlsproxy service in master.cf, which stock Postfix ships
+#  commented out.
+smtp_tls_connection_reuse = yes
+
+#  BARE HOSTNAME. No brackets, no port.
+#  smtp_connect.c parses the nexthop into a bare domain before matching, and
+#  match_list.c exempts '['-prefixed patterns from parsing, so a bracketed value
+#  here fails SILENTLY: no error, no warning, and a clean `postfix check`. The
+#  value is identical for 587 and 465, so the entrypoint must never template a
+#  port into it.
+smtp_connection_cache_destinations = smtp.mailkube.com
+
+#  Idle socket lifetime. Upstream client_timeout is 1m, so at 45s we always close
+#  first and never burn a delivery attempt on a server-closed socket.
+#  Deliberately NOT equal to queue_run_delay: if they matched, every deferred
+#  retry would arrive just as the cached connection expired and pay a new AUTH.
+smtp_connection_cache_time_limit = 45s
+
+#  scache(8)'s own TTL defaults to 2s and silently CAPS the line above. Setting
+#  one without the other is a no-op. This is the single most-missed parameter in
+#  Postfix relay tuning.
+connection_cache_ttl_limit = 45s
+
+#  Bounds a reused channel so DNS is re-resolved and TLS sessions rotate.
+smtp_connection_reuse_time_limit = 300s
+
+#  Upstream max_messages_per_connection is 100. Closing at 90 means Postfix ends
+#  the session at a clean boundary instead of being cut off mid-transaction, with
+#  headroom for any disagreement about what counts as a message.
+smtp_connection_reuse_count_limit = 90
+
+# -----------------------------------------------------------------------------
+#  Concurrency -- how the 20-connections-per-source-IP ceiling is respected
+# -----------------------------------------------------------------------------
+#  HAProxy rejects at `src_conn_cur ge 20` PER SOURCE IP, which is per cluster
+#  egress NAT, shared by every replica and anything else sending from behind it.
+#  The usable ceiling is 19.
+#
+#  FLEET RULE: instances x smtp_destination_concurrency_limit <= 18, with a floor
+#  of one connection per running instance regardless of concurrency (idle cached
+#  connections occupy slots too). In sidecar mode "instances" is the customer's
+#  APP POD COUNT, which this container cannot see or validate.
+#
+#  2 rather than more: with reuse, throughput per connection is RTT-bound, not
+#  connection-bound, so extra concurrency buys nothing and only spends HAProxy
+#  slots. 2 rather than 1: a large DATA transfer cannot head-of-line-block the
+#  queue behind it.
+smtp_destination_concurrency_limit = 2
+
+#  Postfix's default is 5. On a cold start that means 5 sockets and 5 AUTHs in
+#  the first second, against a 2/sec budget: an instant 454, and every 454 emits
+#  a RiskSignal. This one line is the difference between a clean cold start and
+#  a self-inflicted ban.
+initial_destination_concurrency = 1
+
+#  Postfix's default is 1: a single connect or handshake blip marks the
+#  destination dead and defers the ENTIRE queue. With exactly one destination
+#  that is a total outage triggered by one bad packet.
+smtp_destination_concurrency_failed_cohort_limit = 10
+
+# -----------------------------------------------------------------------------
+#  Timeouts
+# -----------------------------------------------------------------------------
+smtp_connect_timeout    = 20s
+#  A slow QUIT would otherwise hold a HAProxy connection slot for 5 minutes.
+smtp_quit_timeout       = 10s
+smtp_data_xfer_timeout  = 300s
+#  MUST stay above the upstream data_processing_timeout of 5m. Do not "optimize"
+#  this below 300s.
+smtp_data_done_timeout  = 600s
+
+# -----------------------------------------------------------------------------
+#  Backoff and queue lifetime
+# -----------------------------------------------------------------------------
+#  Postfix defaults to 300s. 120s rather than 300s because upstream 4xx windows
+#  are one second wide, so a 5-minute wait is pure latency. 120s rather than the
+#  30s an earlier revision used, because every 450/454 emits a RiskSignal and a
+#  fast retry cadence on a synchronized multi-replica cold start can push a
+#  customer over IP_AUTH_RATE_LIMITED (20 per 15 min) on its own.
+minimal_backoff_time = 120s
+#  Must be <= minimal_backoff_time or the backoff never takes effect.
+queue_run_delay      = 120s
+#  Ramp: 120 -> 240 -> 480 -> 960 -> 1800. Bounds post-outage latency to 30 min.
+maximal_backoff_time = 1800s
+
+#  Postfix's default deliberately throttles INGEST when the queue outpaces
+#  delivery. That makes the application's send() block precisely when upstream is
+#  throttled, which is the exact negation of this product's reason to exist.
+in_flow_delay = 0s
+
+# -----------------------------------------------------------------------------
+#  Message limits
+# -----------------------------------------------------------------------------
+#  Postfix's default is 10240000 bytes = 9.77 MiB, which is BELOW even the Free
+#  tier's 10485760 and 2.5x below Enterprise. Left unset, this relay would
+#  locally 552 messages the platform accepts, quoting a number in no plan.
+#  20971520 matches the upstream submission listener's max_message_size.
+message_size_limit = 20971520
+mailbox_size_limit = 0
+
+#  Matches the paid-plan recipient ceiling and makes Postfix's batch split
+#  boundary predictable.
+smtp_destination_recipient_limit = 50
+
+#  The Postfix default, pinned and commented so nobody "fixes" it. This is what
+#  breaks long header lines by inserting CRLF+SPACE at a fixed byte offset with
+#  NO whitespace search. It is why every physical X-Mailkube-* header line must
+#  be <= 998 bytes including the field name. Setting it to 0 disables the break
+#  but would emit >1000-octet lines to third-party receivers on the final hop,
+#  violating RFC 5321 4.5.3.1.6.
+smtp_line_length_limit = 998
+
+# -----------------------------------------------------------------------------
+#  Access control -- this is NOT an open relay
+# -----------------------------------------------------------------------------
+#  mynetworks is generated by the entrypoint. Loopback is always retained (the
+#  container's own healthcheck connects from 127.0.0.1 and would otherwise be
+#  rejected by the line below), and any prefix length of 0 is refused outright.
+#
+#  Because this listener is unauthenticated by design, mynetworks is only the
+#  second line of defence. The real control is network isolation: see
+#  examples/kubernetes/30-networkpolicy.yaml.
+smtpd_client_restrictions    = permit_mynetworks, reject
+smtpd_relay_restrictions     = permit_mynetworks, reject_unauth_destination
+smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination
+#  Permanent reject rather than the defer default, so a misconfigured client
+#  gets a clear answer instead of a mysterious retry loop.
+smtpd_helo_required          = no
+disable_vrfy_command         = yes
+smtpd_discard_ehlo_keywords  = silent-discard, dsn
+
+# -----------------------------------------------------------------------------
+#  Identity -- null client
+# -----------------------------------------------------------------------------
+#  myhostname / mydomain / myorigin are set by the entrypoint from the domain
+#  part of SMTP_USERNAME, which is BY DEFINITION the authenticated domain.
+#
+#  NOTE: myorigin qualifies the ENVELOPE sender only. It has no effect on the
+#  From: header, which is what smtp.mailkube.com validates. Header rewriting for
+#  remote SMTP clients is gated by local_header_rewrite_clients and is off by
+#  design here; ENFORCE_FROM_DOMAIN uses smtp_header_checks instead, which is
+#  topology-independent.
+mydestination        =
+local_transport      = error:5.1.1 local delivery is not available on this relay
+local_recipient_maps =
+alias_maps           =
+alias_database       =
+append_dot_mydomain  = no
+biff                 = no
+inet_interfaces      = all
+
+#  Only ADDS absent headers, never modifies present ones, so it cannot disturb
+#  X-Mailkube-* pass-through. An app that forgets From: gets a locally
+#  synthesized, myorigin-compliant one instead of a remote 550.
+always_add_missing_headers = yes
+
+# -----------------------------------------------------------------------------
+#  Misc
+# -----------------------------------------------------------------------------
+compatibility_level  = 3.11
+smtputf8_enable      = no
+notify_classes       =
+mail_name            = mailkube-relay
+smtpd_banner         = $myhostname ESMTP mailkube-relay

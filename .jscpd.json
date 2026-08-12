@@ -1,0 +1,25 @@
+{
+  "threshold": 1,
+  "minTokens": 50,
+  "reporters": ["console"],
+  "absolute": true,
+  "gitignore": true,
+  "failOnDuplication": true,
+  "ignore": [
+    "**/tests/**",
+    "**/test/**",
+    "**/spec/**",
+    "**/*_test.go",
+    "**/*.test.ts",
+    "**/*Test.java",
+    "**/examples/**",
+    "**/*.lock",
+    "**/*.lock.json",
+    "**/CHANGELOG.md",
+    "**/.github/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/target/**",
+    "**/vendor/**"
+  ]
+}

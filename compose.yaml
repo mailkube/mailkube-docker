@@ -1,0 +1,116 @@
+# =============================================================================
+#  mailkube/smtp-relay - canonical Compose deployment
+# =============================================================================
+#
+#  What this is: a companion SMTP relay. Your application speaks plain,
+#  UNAUTHENTICATED SMTP to this container on port 25. The relay queues the
+#  message locally and forwards it to smtp.mailkube.com over verified TLS with
+#  AUTH PLAIN, using the single credential configured here.
+#
+#  You get two things for that:
+#    1. A durable, local, asynchronous queue. Your application's send() returns
+#       as soon as the message is on the relay's disk, and retries against
+#       upstream outages are Postfix's problem, not your request handler's.
+#    2. One place that holds the SMTP credential. Application containers never
+#       see it, and rotating it means restarting this container only.
+#
+#  Quick start:
+#    cp .env.example .env      # then fill in SMTP_USERNAME and SMTP_PASSWORD
+#    docker compose up -d
+#    docker compose logs -f smtp-relay
+#
+#  Point your application at host `smtp-relay`, port 25, no authentication, no
+#  TLS. That is the entire client-side configuration.
+#
+#  SECURITY, read this once:
+#    Port 25 on this container accepts mail from anyone who can reach it,
+#    without authentication. That is the design: the trust boundary is the
+#    network, not the SMTP session. So the port is NOT published to the host
+#    below, and it must never be published to the internet. Anyone who can
+#    reach it can send mail as your verified domain.
+#
+#  Fleet connection budget:
+#    The upstream edge rejects at 20 concurrent connections PER SOURCE IP, and
+#    that source IP is your whole host or cluster's egress address. Keep
+#    (number of relay instances x RELAY_CONCURRENCY) at or below 18. With the
+#    default RELAY_CONCURRENCY=2 that is 9 relay instances per egress IP.
+# =============================================================================
+
+services:
+  smtp-relay:
+    # Pin an exact version. `latest` means an unreviewed Postfix configuration
+    # change can arrive on an unrelated `docker compose pull`, in the one
+    # component every outgoing message passes through. Upgrade deliberately.
+    image: mailkube/smtp-relay:1.0.0
+    container_name: mailkube-smtp-relay
+    restart: unless-stopped
+
+    # Every variable, with defaults, is documented in .env.example.
+    # `required: false` so `docker compose config` validates in a fresh clone,
+    # before anyone has run `cp .env.example .env`. The relay still refuses to
+    # start without SMTP_USERNAME and SMTP_PASSWORD, with a message saying so.
+    env_file:
+      - path: .env
+        required: false
+
+    volumes:
+      # The mail queue. This is the whole point of the product: a named volume
+      # means an unsent message survives `docker compose down` and a host
+      # reboot. Without it, anything queued during an upstream outage is lost
+      # on the next container replacement.
+      - relay-spool:/var/spool/postfix
+
+      # Postfix's own state: the TLS session cache lives here. Small, and NOT
+      # optional to keep separate. This directory must NEVER be shared between
+      # two running relay instances; Postfix refuses to start when it finds
+      # another instance's state.
+      - relay-data:/var/lib/postfix
+
+    # No `healthcheck:` here on purpose. The image ships one, and
+    # `depends_on: condition: service_healthy` reads the container's health
+    # status, so it works off the image's directive with nothing restated.
+    # Restating it means two definitions to keep in step.
+    #
+    # It is a real SMTP probe (connect, read the 220 banner, QUIT) rather than a
+    # process check, because Postfix's master can be running while smtpd is not
+    # yet accepting connections. Override individual fields here only if you
+    # need different timings.
+
+    # Give the queue drain time to finish. The container flushes the queue on
+    # SIGTERM and waits up to SHUTDOWN_DRAIN_TIMEOUT (20s by default) for it to
+    # empty, so the stop grace period must exceed that with room to spare.
+    stop_grace_period: 60s
+
+    # No `ports:` on purpose. Application containers reach the relay by service
+    # name over the compose network. If you genuinely need host access to test
+    # by hand, bind to loopback only and never to 0.0.0.0:
+    #   ports:
+    #     - "127.0.0.1:2525:25"
+
+    networks:
+      - mailkube
+
+  # ---------------------------------------------------------------------------
+  #  Example client. Delete this service; it exists to show the client-side
+  #  contract, which is: hostname `smtp-relay`, port 25, no user, no password,
+  #  no TLS.
+  # ---------------------------------------------------------------------------
+  # your-app:
+  #   image: registry.example.com/your-app:1.4.2
+  #   restart: unless-stopped
+  #   environment:
+  #     SMTP_HOST: smtp-relay
+  #     SMTP_PORT: "25"
+  #   depends_on:
+  #     smtp-relay:
+  #       condition: service_healthy
+  #   networks:
+  #     - mailkube
+
+volumes:
+  relay-spool:
+  relay-data:
+
+networks:
+  mailkube:
+    driver: bridge

@@ -1,0 +1,20 @@
+# Everything that must never enter the build context.
+.git
+.github
+.rules
+docs
+examples
+test
+scripts
+*.md
+!README.md
+.env
+.env.*
+!.env.example
+.editorconfig
+.jscpd.json
+.hadolint.yaml
+.shellcheckrc
+.releaserc.json
+commitlint.config.js
+compose.yaml

@@ -1,0 +1,112 @@
+name: CI
+
+# Job names `test`, `dry` and `docs` are referenced by branch protection.
+# Never rename them; add new jobs alongside instead.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call: # so release.yml can gate on the full CI
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint Dockerfile (hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: warning
+
+      # --shell=dash is load-bearing, not incidental: ShellCheck suppresses
+      # SC3040 ("set -o pipefail is undefined") only for the dash dialect.
+      # BusyBox ash, which this image actually runs, DOES support pipefail.
+      # Scoped to rootfs/ because scripts/ contains bash.
+      - name: Lint shell (shellcheck)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          find rootfs -type f -name '*.sh' -print0 | xargs -0 shellcheck -x --shell=dash
+          shellcheck -x scripts/*.sh
+
+      - name: Format check (shfmt)
+        run: |
+          curl -fsSL -o /tmp/shfmt https://github.com/mvdan/sh/releases/download/v3.10.0/shfmt_v3.10.0_linux_amd64
+          chmod +x /tmp/shfmt
+          /tmp/shfmt -d -i 2 -ci -sr rootfs scripts
+
+      - name: Lint YAML
+        run: |
+          pipx install yamllint
+          yamllint -d '{extends: relaxed, rules: {line-length: {max: 160}}}' examples compose.yaml .github
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: mailkube/smtp-relay:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Integration tests
+        working-directory: test
+        run: uv run --with pytest --with cryptography --with pytest-timeout pytest -q
+
+  dry:
+    # Language-agnostic duplication (DRY) gate, identical across every mailkube repo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+      - name: Copy-paste detection (jscpd)
+        run: npx --yes jscpd@4 --config .jscpd.json .
+
+  docs:
+    # Governance gates.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rule-index sync check
+        run: ./scripts/check-rule-index.sh
+      - name: Docker Hub README portability
+        run: ./scripts/check-readme-dockerhub.sh
+      - name: Environment variables are documented and tested
+        run: ./scripts/check-env-matrix.sh
+
+  scan:
+    # Not branch-protected: a newly disclosed CVE in the base image must not
+    # block an unrelated pull request.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: mailkube/smtp-relay:scan
+      - name: Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: mailkube/smtp-relay:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"

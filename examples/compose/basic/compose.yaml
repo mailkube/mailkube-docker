@@ -1,0 +1,55 @@
+# =============================================================================
+#  Example: basic
+#  The smallest configuration that works.
+# =============================================================================
+#
+#  Two required variables, one durable volume for the queue, one private
+#  network. Nothing else.
+#
+#  Run it:
+#      export SMTP_USERNAME=myapp01@example.com
+#      export SMTP_PASSWORD='your-smtp-credential-secret'
+#      docker compose up -d
+#
+#  Send through it from another container on the `mailkube` network:
+#      host smtp-relay, port 25, no user, no password, no TLS.
+#
+#  SMTP_USERNAME must be <username>@<verified-domain>. A bare username does not
+#  authenticate. SMTP_PASSWORD is the SMTP credential secret, not an API key.
+#
+#  The relay accepts UNAUTHENTICATED mail from anything that can reach port 25.
+#  It is not published to the host here, and it must not be exposed publicly.
+#
+#  Fleet connection budget: instances x RELAY_CONCURRENCY <= 18, because the
+#  upstream edge rejects at 20 concurrent connections per source IP and that IP
+#  is your host's shared egress address.
+# =============================================================================
+
+services:
+  smtp-relay:
+    image: mailkube/smtp-relay:latest  # Always pin a version
+    container_name: mailkube-smtp-relay
+    restart: unless-stopped
+    environment:
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+    volumes:
+      # Durable queue. Without this, mail sitting in the queue during an
+      # upstream outage is lost when the container is replaced.
+      - relay-spool:/var/spool/postfix
+      # Postfix state (TLS session cache). Never share this between instances.
+      - relay-data:/var/lib/postfix
+    # The image ships its own HEALTHCHECK; nothing to restate here.
+    # Longer than SHUTDOWN_DRAIN_TIMEOUT (20s default) so the queue drain on
+    # SIGTERM has time to finish.
+    stop_grace_period: 60s
+    networks:
+      - mailkube
+
+volumes:
+  relay-spool:
+  relay-data:
+
+networks:
+  mailkube:
+    driver: bridge

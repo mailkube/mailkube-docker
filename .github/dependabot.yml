@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # Keeps the digest-pinned Alpine base current. This is the mechanism that
+  # stops the base image rotting back to an unsupported release, and it is why
+  # hadolint DL3018 (pin apk versions) is waived in .hadolint.yaml.
+  - package-ecosystem: "docker"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "uv"
+    directory: "/test"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
