@@ -53,7 +53,7 @@ jobs:
       # write a cache backend at all ("Cache export is not supported for the
       # docker driver"); setup-buildx switches to `docker-container`, which
       # still honours `load: true`.
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build image
         uses: docker/build-push-action@v6
