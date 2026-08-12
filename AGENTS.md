@@ -43,4 +43,5 @@ from `.rules/` based on the task.
   silently removes its protection. Never rename them; add new jobs instead.
 - **Conventional Commits** for PR titles (PRs are **squash-merged** on the title); only `feat:`,
   `fix:` and `perf:` cut a release.
-- **Never hand-edit `CHANGELOG.md` or a version string.** semantic-release owns both.
+- **Never hand-edit a version string.** semantic-release owns the version, and it only ever writes a
+  tag and a GitHub Release. There is deliberately no `CHANGELOG.md`; see `.rules/RELEASE.md`.

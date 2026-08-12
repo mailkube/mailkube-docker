@@ -43,8 +43,9 @@ Docker Hub serves the description outside the repository, so a relative link (`[
 `.jscpd.json` blocks at > 1% duplicated code with `minTokens: 50`, and **Markdown is in scope**. Two
 exemptions exist and are deliberate:
 
-- `**/CHANGELOG.md`: semantic-release generates it, and repeated release stanzas are duplication by
-  construction. Exempting a generated file costs nothing, because nobody maintains it by hand.
+- `**/CHANGELOG.md`: inert here, since this repo has no changelog file (`.rules/RELEASE.md` explains
+  why). Kept so the ignore list stays identical to the other mailkube repos, where semantic-release
+  does generate one and repeated release stanzas are duplication by construction.
 - `**/examples/**`: the Compose, Kubernetes and OpenShift manifests are necessarily near-identical
   (same environment block, same probes, same securityContext). Factoring them apart would defeat the
   entire purpose of an example, which is to be copy-pasted whole. This is the one place where

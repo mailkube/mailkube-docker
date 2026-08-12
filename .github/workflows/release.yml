@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     permissions:
-      contents: write # push the version bump, the tag, and the GitHub Release
+      contents: write # push the tag and create the GitHub Release
     outputs:
       released: ${{ steps.detect.outputs.released }}
       version: ${{ steps.detect.outputs.version }}
@@ -39,19 +39,19 @@ jobs:
 
       # A tag pushed with GITHUB_TOKEN does NOT trigger other workflows (GitHub
       # loop prevention), so a separate `on: push: tags` publish job would never
-      # fire. Comparing the newest tag before and after keeps .releaserc.json
-      # byte-identical to the other mailkube repos: no extra plugin, no PAT.
+      # fire. Comparing the newest tag before and after is what lets `publish`
+      # run in the same workflow, with no extra plugin and no PAT.
       - name: Capture tag before release
         id: before
         run: echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
 
+      # No @semantic-release/changelog or /git plugin on purpose: semantic-release
+      # creates the TAG and the GitHub Release and never writes to the branch.
+      # A ruleset protecting `main` would reject a bot commit, and
+      # github-actions[bot] cannot be added to a ruleset bypass list. Release
+      # notes live on the GitHub Releases page instead of in a CHANGELOG.md.
       - name: Release (semantic-release)
-        run: >-
-          npx --yes
-          -p semantic-release
-          -p @semantic-release/changelog
-          -p @semantic-release/git
-          semantic-release
+        run: npx --yes semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

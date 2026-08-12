@@ -194,9 +194,7 @@ hardcodes something else.
 
 ## Configuration
 
-The upstream host is **hardcoded**. There is no environment variable and no build argument for it;
-changing it requires editing `rootfs/etc/postfix/main.cf` and rebuilding. Only the port is
-selectable, and only between the two submission ports.
+The upstream host is `smtp.mailkube.com` and the port is selectable (587 or 485).
 
 ### Credentials
 
@@ -477,25 +475,6 @@ Consequently:
 | `Connection reset by peer`, no 4xx lines | Egress IP is banned | Wait it out; find the app generating rate rejections |
 | Repeated `454 4.7.0` | Connection reuse broken | Check `conn_use=` appears in the log; open an issue |
 | Pod not ready during rollout | Probes missing | Use the manifests in `examples/kubernetes/` |
-
-## Migrating from `boky/postfix` or `juanluisbaptiste/postfix`
-
-Removed variables are **startup errors**, not silent no-ops, so a migration cannot lose your
-configuration quietly.
-
-| Old | New |
-|---|---|
-| `SMTP_SERVER` | Removed. The host is hardcoded. |
-| `SMTP_NETWORKS` | `RELAY_NETWORKS` |
-| `SERVER_HOSTNAME` | `RELAY_HOSTNAME`. The mail domain now comes from `SMTP_USERNAME`. |
-| `OVERWRITE_FROM` | `ENFORCE_FROM_DOMAIN=yes` |
-| `SMTP_HEADER_TAG` | Removed. Use `X-Mailkube-Tags`. |
-| `SMTP_HEADER_X_ENTITY_REF_ID_PREFIX` | Removed. Not a Mailkube header. |
-| `LOG_SUBJECT` | Removed. Subjects in logs are personal data. |
-| `DESTINATION`, `ALWAYS_ADD_MISSING_HEADERS` | Removed. |
-| `DEBUG` | `RELAY_DEBUG` |
-
-Set `RELAY_IGNORE_LEGACY_ENV=yes` to start anyway while you migrate.
 
 ## Image tags
 
