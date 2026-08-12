@@ -1,5 +1,5 @@
 # =============================================================================
-#  mailkube/smtp-relay  --  Postfix null-client relay to smtp.mailkube.com
+#  ghcr.io/mailkube/smtp-relay  --  Postfix null-client relay to smtp.mailkube.com
 # =============================================================================
 #
 #  This file is the SOURCE OF TRUTH for every value that does not depend on the

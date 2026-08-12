@@ -1,7 +1,7 @@
 [project]
 name = "mailkube-smtp-relay-tests"
 version = "0.0.0"
-description = "Integration test harness for the mailkube/smtp-relay container."
+description = "Integration test harness for the ghcr.io/mailkube/smtp-relay container."
 requires-python = ">=3.12"
 dependencies = [
   "pytest>=8.0",

@@ -119,7 +119,7 @@ spec:
           # Pin an exact version. `latest` in the component every outgoing
           # message passes through means an unreviewed mail-path change can
           # arrive on an unrelated pod restart.
-          image: mailkube/smtp-relay:1.0.0
+          image: ghcr.io/mailkube/smtp-relay:1.0.0
           imagePullPolicy: IfNotPresent
 
           ports:

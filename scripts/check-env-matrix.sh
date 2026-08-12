@@ -30,7 +30,7 @@ note() { printf '  %-26s %s\n' "$1" "$2"; }
 vars=""
 while IFS= read -r name; do
   [ -n "$name" ] && vars="${vars}${name} "
-done <<EOF
+done << EOF
 $(grep -oE '^[[:space:]]*[A-Z][A-Z0-9_]+="\$\{[A-Z][A-Z0-9_]+:-' "$ENV_LIB" |
   grep -oE '^[[:space:]]*[A-Z][A-Z0-9_]+' | sed 's/^[[:space:]]*//' | sort -u)
 EOF
@@ -48,9 +48,14 @@ for v in $(printf '%s\n' $vars | sort -u); do
   case "$SKIP" in *" $v "*) continue ;; esac
 
   missing=""
-  grep -q "${v}" "$EXAMPLE" 2>/dev/null || missing="${missing} .env.example"
-  grep -q "${v}" "$README" 2>/dev/null || missing="${missing} README.md"
-  grep -rq "${v}" "$TESTS" 2>/dev/null || missing="${missing} a-test"
+  grep -q "${v}" "$EXAMPLE" 2> /dev/null || missing="${missing} .env.example"
+  grep -q "${v}" "$README" 2> /dev/null || missing="${missing} README.md"
+  # Scoped to the test sources on purpose. A bare `grep -r test` also searches
+  # the git-ignored `test/.venv`, where any three-letter name is matched by some
+  # dependency's source and the gate passes locally while failing in CI on a
+  # clean checkout. TZ is how that was found.
+  grep -rq --include='*.py' --exclude-dir='.venv' --exclude-dir='__pycache__' \
+    "${v}" "$TESTS" 2> /dev/null || missing="${missing} a-test"
 
   if [ -n "$missing" ]; then
     note "$v" "MISSING from:${missing}"
@@ -59,7 +64,7 @@ for v in $(printf '%s\n' $vars | sort -u); do
 done
 
 if [[ $fail -ne 0 ]]; then
-  cat <<'EOF'
+  cat << 'EOF'
 
 Every environment variable must appear in .env.example, README.md, and at least
 one test. See .rules/SOLID_DRY_KISS.md (Coverage pillar) and .rules/TESTING.md.

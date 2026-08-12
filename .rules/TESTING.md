@@ -128,7 +128,7 @@ harness invocation, including in any new fixture.
 
 ## Resume protocol for a local run
 
-1. `docker build -t mailkube/smtp-relay:dev .`
+1. `docker build -t ghcr.io/mailkube/smtp-relay:dev .`
 2. Build the `test/sink` image; run `gen_ca.py` into `/tmp/mkrelay/certs`.
 3. Create the docker network (`mknet`); start the sink with `--network-alias smtp.mailkube.com`.
 4. Start the relay with `-v <ca>.pem:/etc/ssl/certs/$(cat ca_hash.txt).0:ro` and

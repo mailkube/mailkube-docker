@@ -1,5 +1,5 @@
 # =============================================================================
-#  mailkube/smtp-relay  --  Postfix master process configuration
+#  ghcr.io/mailkube/smtp-relay  --  Postfix master process configuration
 # =============================================================================
 #
 #  Derived from Alpine's stock master.cf with two deliberate changes:

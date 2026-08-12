@@ -1,7 +1,7 @@
 # Project Rules
 
-`mailkube-docker` is a public (Apache-2.0) mailkube companion SMTP relay, published to Docker Hub as
-`mailkube/smtp-relay`. Applications in a cluster send plain, unauthenticated SMTP to it on port 25; it
+`mailkube-docker` is a public (Apache-2.0) mailkube companion SMTP relay, published to GitHub
+Container Registry as `ghcr.io/mailkube/smtp-relay`. Applications in a cluster send plain, unauthenticated SMTP to it on port 25; it
 relays to `smtp.mailkube.com` over verified TLS with AUTH PLAIN, giving those applications a durable
 local async queue and keeping the SMTP credential in exactly one place. Load the relevant rule file
 from `.rules/` based on the task.
@@ -22,8 +22,8 @@ from `.rules/` based on the task.
 | `.rules/CONTAINER.md` | Editing the `Dockerfile`, the base image pin, the package list, the build assertions, OCI labels, the healthcheck, or the capability / `readOnlyRootFilesystem` posture. |
 | `.rules/ENTRYPOINT.md` | Editing `rootfs/usr/local/bin/*.sh` or `rootfs/usr/local/lib/mailkube-relay/*.sh`: shell style, the config-apply contract, validation, secret handling, signals and drain. |
 | `.rules/TESTING.md` | Adding or changing tests, the `test/sink` harness, the test seams, or any environment variable (every variable needs a matrix row). |
-| `.rules/DOCS.md` | Editing `README.md`, `docs/DOCKERHUB.md`, `examples/**`, or any mermaid diagram. |
-| `.rules/RELEASE.md` | Touching `.releaserc.json`, the release / publish workflows, image tags, cosign signing, or the Docker Hub description sync. |
+| `.rules/DOCS.md` | Editing `README.md`, `examples/**`, or any mermaid diagram. |
+| `.rules/RELEASE.md` | Touching `.releaserc.json`, the release / publish workflows, image tags, cosign signing, or GHCR publishing. |
 
 ## Key Conventions (always apply)
 

@@ -54,7 +54,7 @@ jobs:
         with:
           context: .
           load: true
-          tags: mailkube/smtp-relay:test
+          tags: ghcr.io/mailkube/smtp-relay:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -85,8 +85,6 @@ jobs:
       - uses: actions/checkout@v7
       - name: Rule-index sync check
         run: ./scripts/check-rule-index.sh
-      - name: Docker Hub README portability
-        run: ./scripts/check-readme-dockerhub.sh
       - name: Environment variables are documented and tested
         run: ./scripts/check-env-matrix.sh
 
@@ -102,11 +100,11 @@ jobs:
         with:
           context: .
           load: true
-          tags: mailkube/smtp-relay:scan
+          tags: ghcr.io/mailkube/smtp-relay:scan
       - name: Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: mailkube/smtp-relay:scan
+          image-ref: ghcr.io/mailkube/smtp-relay:scan
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"

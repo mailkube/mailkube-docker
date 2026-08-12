@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # =============================================================================
-#  mailkube/smtp-relay
+#  ghcr.io/mailkube/smtp-relay
 #  A companion SMTP relay: plain unauthenticated SMTP in, authenticated TLS to
 #  smtp.mailkube.com out, with a durable local queue in between.
 # =============================================================================
@@ -90,7 +90,7 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED=1970-01-01T00:00:00Z
-LABEL org.opencontainers.image.title="mailkube/smtp-relay" \
+LABEL org.opencontainers.image.title="ghcr.io/mailkube/smtp-relay" \
       org.opencontainers.image.description="Companion SMTP relay that gives applications a local, durable, unauthenticated SMTP queue and forwards to smtp.mailkube.com over authenticated TLS." \
       org.opencontainers.image.url="https://github.com/mailkube/mailkube-docker" \
       org.opencontainers.image.documentation="https://github.com/mailkube/mailkube-docker#readme" \

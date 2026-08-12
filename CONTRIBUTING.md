@@ -1,7 +1,7 @@
 # Contributing to mailkube-docker
 
 Thanks for helping improve **mailkube-docker**, the companion SMTP relay image
-(`mailkube/smtp-relay`) for [mailkube](https://mailkube.com).
+(`ghcr.io/mailkube/smtp-relay`) for [mailkube](https://mailkube.com).
 Contributions of all kinds are welcome: bug reports, fixes, docs, and features.
 
 By contributing you agree that your contributions are licensed under the project's
@@ -18,7 +18,7 @@ git clone https://github.com/mailkube/mailkube-docker
 cd mailkube-docker
 
 # 1. Build the image. This also runs the 7 build-time assertions.
-docker build -t mailkube/smtp-relay:dev .
+docker build -t ghcr.io/mailkube/smtp-relay:dev .
 
 # 2. Build the test-only SMTP sink that stands in for smtp.mailkube.com.
 docker build -t mailkube-relay-sink:dev test/sink
@@ -38,7 +38,7 @@ docker run --rm --network mknet \
   -e SMTP_USERNAME=myapp01@example.com -e SMTP_PASSWORD=secret \
   -e RELAY_START_JITTER=0 \
   -v "/tmp/mkrelay/certs/ca.pem:/etc/ssl/certs/$(cat /tmp/mkrelay/certs/ca_hash.txt).0:ro" \
-  mailkube/smtp-relay:dev
+  ghcr.io/mailkube/smtp-relay:dev
 ```
 
 The full suite runs the same harness through pytest: `python3 -m pytest test/`.
@@ -57,7 +57,7 @@ shellcheck --shell=dash --external-sources \
   rootfs/usr/local/lib/mailkube-relay/*.sh             # dash dialect is load-bearing, see .shellcheckrc
 shfmt -d -i 2 -ci -sr rootfs/                          # shell formatting (-d = diff, fails on drift)
 yamllint examples/ .github/                            # shipped manifests + workflows
-docker build -t mailkube/smtp-relay:dev .              # runs the 7 build-time assertions
+docker build -t ghcr.io/mailkube/smtp-relay:dev .              # runs the 7 build-time assertions
 python3 -m pytest test/                                # integration matrix against test/sink
 npx --yes jscpd@4 --config .jscpd.json .               # duplication (DRY) gate, blocks at > 1%
 ./scripts/check-rule-index.sh                          # every .rules/*.md indexed in AGENTS.md

@@ -14,14 +14,27 @@ permissions:
 jobs:
   scan-published:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      packages: read # pull from ghcr.io
     steps:
       - uses: actions/checkout@v7
 
+      # Anonymous pulls work once the package is public, but logging in keeps
+      # this job working during the window before that switch is flipped, and
+      # if the package is ever made private again.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Trivy scan of :latest
         id: trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: mailkube/smtp-relay:latest
+          image-ref: ghcr.io/mailkube/smtp-relay:latest
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           format: table
@@ -38,7 +51,7 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Security: fixable CRITICAL/HIGH findings in mailkube/smtp-relay:latest`,
+              title: `Security: fixable CRITICAL/HIGH findings in ghcr.io/mailkube/smtp-relay:latest`,
               labels: ['security'],
               body: "Weekly scan of the published image found fixable vulnerabilities.\n\nRebuild against a current base image digest.\n\n```\n" + body.slice(0, 60000) + "\n```",
             });

@@ -92,7 +92,7 @@ spec:
         - name: smtp-relay
           # Pin an exact version; `latest` would let an unreviewed change to the
           # mail path arrive on an unrelated pod restart.
-          image: mailkube/smtp-relay:1.0.0
+          image: ghcr.io/mailkube/smtp-relay:1.0.0
           imagePullPolicy: IfNotPresent
 
           # THIS LINE is what makes it a sidecar rather than an init container.

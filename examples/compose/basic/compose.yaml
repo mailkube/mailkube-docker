@@ -27,7 +27,7 @@
 
 services:
   smtp-relay:
-    image: mailkube/smtp-relay:latest  # Always pin a version
+    image: ghcr.io/mailkube/smtp-relay:latest  # Always pin a version
     container_name: mailkube-smtp-relay
     restart: unless-stopped
     environment:
