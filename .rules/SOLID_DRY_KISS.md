@@ -39,7 +39,7 @@ shellcheck --shell=dash --external-sources \
   rootfs/usr/local/bin/*.sh rootfs/usr/local/lib/mailkube-relay/*.sh   # dash dialect is load-bearing
 shfmt -d -i 2 -ci -sr rootfs/                          # formatting (-d = diff, non-zero on drift)
 yamllint examples/ .github/                            # manifests and workflows
-docker build -t mailkube/smtp-relay:dev .              # runs the 7 build assertions
+docker build -t ghcr.io/mailkube/smtp-relay:dev .              # runs the 7 build assertions
 python3 -m pytest test/                                # integration matrix against test/sink
 ./scripts/check-env-matrix.sh                          # every env var + validation branch has a row
 npx --yes jscpd@4 --config .jscpd.json .               # duplication (DRY) gate, blocks at > 1%

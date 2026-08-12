@@ -14,19 +14,37 @@ permissions:
 jobs:
   scan-published:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      packages: read # pull from ghcr.io
     steps:
       - uses: actions/checkout@v7
 
+      # Run from Trivy's own image rather than aquasecurity/trivy-action. The
+      # action installs the binary through a shell installer that resolves the
+      # release over the GitHub API, and a rate-limited lookup on a shared
+      # runner IP reports the pinned version as missing. See ci.yml.
+      #
+      # TRIVY_USERNAME/PASSWORD are Trivy's own registry credentials: it pulls
+      # through its own client, not the docker daemon, so a `docker login` on
+      # the host would have no effect here. --exit-code 1 is what makes the
+      # next step open an issue.
       - name: Trivy scan of :latest
         id: trivy
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: mailkube/smtp-relay:latest
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          format: table
-          output: trivy.txt
-          exit-code: "1"
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker run --rm \
+            -e TRIVY_USERNAME -e TRIVY_PASSWORD \
+            -v "${HOME}/.cache/trivy:/root/.cache/trivy" \
+            -v "${PWD}:/out" -w /out \
+            ghcr.io/aquasecurity/trivy:0.73.0 image \
+              --image-src remote \
+              --severity CRITICAL,HIGH --ignore-unfixed \
+              --format table --output trivy.txt --exit-code 1 \
+              ghcr.io/mailkube/smtp-relay:latest
 
       - name: Open an issue on findings
         if: failure()
@@ -38,7 +56,7 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Security: fixable CRITICAL/HIGH findings in mailkube/smtp-relay:latest`,
+              title: `Security: fixable CRITICAL/HIGH findings in ghcr.io/mailkube/smtp-relay:latest`,
               labels: ['security'],
               body: "Weekly scan of the published image found fixable vulnerabilities.\n\nRebuild against a current base image digest.\n\n```\n" + body.slice(0, 60000) + "\n```",
             });

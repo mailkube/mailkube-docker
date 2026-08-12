@@ -1,8 +1,7 @@
-# mailkube/smtp-relay
+# ghcr.io/mailkube/smtp-relay
 
 [![CI](https://github.com/mailkube/mailkube-docker/actions/workflows/ci.yml/badge.svg)](https://github.com/mailkube/mailkube-docker/actions/workflows/ci.yml)
-[![Docker Image Version](https://img.shields.io/docker/v/mailkube/smtp-relay?sort=semver&label=docker)](https://hub.docker.com/r/mailkube/smtp-relay)
-[![Docker Pulls](https://img.shields.io/docker/pulls/mailkube/smtp-relay)](https://hub.docker.com/r/mailkube/smtp-relay)
+[![Image](https://img.shields.io/github/v/release/mailkube/mailkube-docker?sort=semver&label=image)](https://github.com/mailkube/mailkube-docker/pkgs/container/smtp-relay)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-purple.svg)](CODE_OF_CONDUCT.md)
 
@@ -22,7 +21,7 @@ docker run -d --name mailkube-relay \
   -e SMTP_USERNAME='myapp01@example.com' \
   -e SMTP_PASSWORD='<your-smtp-credential-secret>' \
   -v mailkube-spool:/var/spool/postfix \
-  mailkube/smtp-relay:1
+  ghcr.io/mailkube/smtp-relay:1
 ```
 
 Point your application at `mailkube-relay:25` with no username, no password, and no TLS. That is
@@ -71,7 +70,7 @@ flowchart LR
   subgraph cluster["Your cluster"]
     app1["app"]
     app2["worker"]
-    subgraph relay["mailkube/smtp-relay"]
+    subgraph relay["smtp-relay"]
       smtpd["smtpd<br/>:25 plain"]
       queue[("spool<br/>durable queue")]
       smtp["smtp client<br/>TLS + AUTH PLAIN"]
@@ -194,9 +193,7 @@ hardcodes something else.
 
 ## Configuration
 
-The upstream host is **hardcoded**. There is no environment variable and no build argument for it;
-changing it requires editing `rootfs/etc/postfix/main.cf` and rebuilding. Only the port is
-selectable, and only between the two submission ports.
+The upstream host is `smtp.mailkube.com` and the port is selectable (587 or 485).
 
 ### Credentials
 
@@ -264,7 +261,7 @@ docker run -d --name mailkube-relay \
   -e RELAY_NETWORKS_MODE=replace -e RELAY_NETWORKS=10.42.0.0/16 \
   -v ./accounts:/run/secrets/relay-accounts:ro -v ./tls:/tls:ro \
   -v mailkube-spool:/var/spool/postfix \
-  mailkube/smtp-relay:1
+  ghcr.io/mailkube/smtp-relay:1
 ```
 
 Clients then authenticate with a plain username and password over STARTTLS. `AUTH PLAIN` and
@@ -309,7 +306,7 @@ local part, so `wordpress@localhost` becomes `wordpress@example.com`.
 ```yaml
 services:
   mailkube-relay:
-    image: mailkube/smtp-relay:1.0.0
+    image: ghcr.io/mailkube/smtp-relay:1.0.0
     restart: unless-stopped
     env_file: .env
     volumes:
@@ -478,25 +475,6 @@ Consequently:
 | Repeated `454 4.7.0` | Connection reuse broken | Check `conn_use=` appears in the log; open an issue |
 | Pod not ready during rollout | Probes missing | Use the manifests in `examples/kubernetes/` |
 
-## Migrating from `boky/postfix` or `juanluisbaptiste/postfix`
-
-Removed variables are **startup errors**, not silent no-ops, so a migration cannot lose your
-configuration quietly.
-
-| Old | New |
-|---|---|
-| `SMTP_SERVER` | Removed. The host is hardcoded. |
-| `SMTP_NETWORKS` | `RELAY_NETWORKS` |
-| `SERVER_HOSTNAME` | `RELAY_HOSTNAME`. The mail domain now comes from `SMTP_USERNAME`. |
-| `OVERWRITE_FROM` | `ENFORCE_FROM_DOMAIN=yes` |
-| `SMTP_HEADER_TAG` | Removed. Use `X-Mailkube-Tags`. |
-| `SMTP_HEADER_X_ENTITY_REF_ID_PREFIX` | Removed. Not a Mailkube header. |
-| `LOG_SUBJECT` | Removed. Subjects in logs are personal data. |
-| `DESTINATION`, `ALWAYS_ADD_MISSING_HEADERS` | Removed. |
-| `DEBUG` | `RELAY_DEBUG` |
-
-Set `RELAY_IGNORE_LEGACY_ENV=yes` to start anyway while you migrate.
-
 ## Image tags
 
 | Tag | Moves | Use for |
@@ -511,7 +489,7 @@ Images are multi-arch (`linux/amd64`, `linux/arm64`), built with SBOM and proven
 and signed with cosign:
 
 ```bash
-cosign verify docker.io/mailkube/smtp-relay:1.0.0 \
+cosign verify ghcr.io/mailkube/smtp-relay:1.0.0 \
   --certificate-identity-regexp '^https://github.com/mailkube/mailkube-docker/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

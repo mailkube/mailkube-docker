@@ -92,6 +92,10 @@ from build args and are overridden by `docker/metadata-action` at push time; kee
 (`dev`, `unknown`, the epoch) so a local build still produces a valid label set.
 `base.name` must be updated whenever the base image line changes.
 
+**`source` is load-bearing, not decorative.** GHCR uses it to link the package to this repository,
+which is what makes the package page render `README.md`. Drop it and the page goes blank with no
+error anywhere in the build or the publish. See `.rules/RELEASE.md`.
+
 ## Multi-arch
 
 The image is built and published for `linux/amd64` and `linux/arm64`. Nothing in the tree is

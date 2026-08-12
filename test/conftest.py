@@ -1,4 +1,4 @@
-"""Harness for the mailkube/smtp-relay integration tests.
+"""Harness for the ghcr.io/mailkube/smtp-relay integration tests.
 
 Two seams let the tests exercise a relay whose upstream host is hardcoded, with
 no override environment variable and no test-only code path in the image:
@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-IMAGE = "mailkube/smtp-relay:test"
+IMAGE = "ghcr.io/mailkube/smtp-relay:test"
 SINK_IMAGE = "mk-sink:test"
 NETWORK = "mkrelay-test-net"
 UPSTREAM_ALIAS = "smtp.mailkube.com"

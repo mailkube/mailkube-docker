@@ -1,64 +1,52 @@
 # Documentation Rules
 
-Load this before editing `README.md`, `docs/DOCKERHUB.md`, or `examples/**`.
+Load this before editing `README.md` or `examples/**`.
 
-## The two-audience split
+## One README, two surfaces
 
 | File | Audience | Rendered by |
 |---|---|---|
-| `README.md` | someone reading the repository on GitHub | GitHub Flavored Markdown |
-| `docs/DOCKERHUB.md` | someone reading the image page on Docker Hub | Docker Hub's Markdown renderer |
+| `README.md` | the repository on GitHub, **and** the GHCR package page | GitHub Flavored Markdown |
 | `examples/**` | someone copy-pasting a working deployment | not rendered, executed |
 
 `README.md` is the full reference: architecture, the environment variable table, the security model,
 troubleshooting, alert expressions, and the fleet connection budget from
 `.rules/POSTFIX_TUNING.md`.
 
-`docs/DOCKERHUB.md` is a **condensation**, not a copy. It is pushed to the Docker Hub repository
-description by the release workflow (see `.rules/RELEASE.md`), and it exists to get a first-time user
-to a working `docker run` and then send them to GitHub. Keep it to: what the image is, the minimum
-run command, the environment variable table, the ports, the tags, and links.
+There is deliberately **no second, condensed registry document**. GHCR renders this same `README.md`
+on the package page, through the repository link that `org.opencontainers.image.source` establishes,
+so a registry-specific copy would be a file to keep in sync with no reader of its own. The Docker Hub
+era needed one because that description had to be pushed; this one does not. Do not reintroduce it.
 
-## Mermaid policy
+Two consequences follow, and both are improvements over the previous rule set:
 
-**Docker Hub does not render mermaid.** A ```` ```mermaid ```` fence appears there as a wall of raw
-diagram source, which is worse than no diagram.
-
-- `README.md` may use mermaid freely, and does (architecture and message-flow diagrams).
-- `docs/DOCKERHUB.md` must contain **no mermaid at all**. If a concept needs a picture there, link to
-  the README section that has it.
-
-## Absolute URLs in `docs/DOCKERHUB.md`
-
-Docker Hub serves the description outside the repository, so a relative link (`[example](examples/kubernetes/)`,
-`[see the rules](.rules/CONTAINER.md)`) resolves against `hub.docker.com` and 404s.
-
-> **Every link and every image reference in `docs/DOCKERHUB.md` must be an absolute
-> `https://github.com/mailkube/mailkube-docker/...` URL.** Badges must point at absolute raw URLs too.
-
-`README.md` uses relative links normally, because GitHub resolves them.
+- **Mermaid is fine everywhere.** GitHub renders it on both surfaces. Docker Hub did not, which is
+  why the old rule banned it from the registry document.
+- **Relative links are fine.** GitHub resolves them on the package page as it does in the repository.
 
 ## Duplication (jscpd) and the exemption decision
 
 `.jscpd.json` blocks at > 1% duplicated code with `minTokens: 50`, and **Markdown is in scope**. Two
 exemptions exist and are deliberate:
 
-- `**/CHANGELOG.md`: semantic-release generates it, and repeated release stanzas are duplication by
-  construction. Exempting a generated file costs nothing, because nobody maintains it by hand.
+- `**/CHANGELOG.md`: inert here, since this repo has no changelog file (`.rules/RELEASE.md` explains
+  why). Kept so the ignore list stays identical to the other mailkube repos, where semantic-release
+  does generate one and repeated release stanzas are duplication by construction.
 - `**/examples/**`: the Compose, Kubernetes and OpenShift manifests are necessarily near-identical
   (same environment block, same probes, same securityContext). Factoring them apart would defeat the
   entire purpose of an example, which is to be copy-pasted whole. This is the one place where
   duplication is the feature.
 
-**`docs/DOCKERHUB.md` is NOT exempt, and must not be added to the ignore list.** That is the enforcement
-mechanism for the condensation rule above: if it drifts into being a copy of `README.md`, the `dry` job
-fails, which is the intended signal. Fix it by shortening `DOCKERHUB.md` and linking out, never by
-widening the ignore list.
+**`**/*.md` must never be added to the ignore list.** It would exempt the whole `.rules/` corpus, which
+is exactly where copy-paste between rule files does real damage. If a Markdown file trips the gate,
+shorten it and link out.
 
 ## What the `docs` CI job checks
 
 - `scripts/check-rule-index.sh`: every `.rules/*.md` file has a row in the `AGENTS.md` index table. An
   unindexed rule is invisible to progressive disclosure, which is the whole reason the index exists.
+- `scripts/check-env-matrix.sh`: every variable in `env.sh` appears in `.env.example`, `README.md`,
+  and at least one test.
 - Markdown lint and link checking over the tracked Markdown files.
 - `yamllint` over `examples/` and `.github/`, so a shipped manifest cannot be syntactically broken.
 

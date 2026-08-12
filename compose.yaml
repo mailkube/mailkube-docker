@@ -1,5 +1,5 @@
 # =============================================================================
-#  mailkube/smtp-relay - canonical Compose deployment
+#  ghcr.io/mailkube/smtp-relay - canonical Compose deployment
 # =============================================================================
 #
 #  What this is: a companion SMTP relay. Your application speaks plain,
@@ -41,7 +41,7 @@ services:
     # Pin an exact version. `latest` means an unreviewed Postfix configuration
     # change can arrive on an unrelated `docker compose pull`, in the one
     # component every outgoing message passes through. Upgrade deliberately.
-    image: mailkube/smtp-relay:1.0.0
+    image: ghcr.io/mailkube/smtp-relay:1.0.0
     container_name: mailkube-smtp-relay
     restart: unless-stopped
 

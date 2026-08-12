@@ -1,4 +1,4 @@
-# Running mailkube/smtp-relay on OpenShift
+# Running ghcr.io/mailkube/smtp-relay on OpenShift
 
 ## The limitation, stated plainly
 

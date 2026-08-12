@@ -49,12 +49,18 @@ jobs:
           pipx install yamllint
           yamllint -d '{extends: relaxed, rules: {line-length: {max: 160}}}' examples compose.yaml .github
 
+      # Required by the cache export below. The default `docker` driver cannot
+      # write a cache backend at all ("Cache export is not supported for the
+      # docker driver"); setup-buildx switches to `docker-container`, which
+      # still honours `load: true`.
+      - uses: docker/setup-buildx-action@v3
+
       - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
-          tags: mailkube/smtp-relay:test
+          tags: ghcr.io/mailkube/smtp-relay:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -85,8 +91,6 @@ jobs:
       - uses: actions/checkout@v7
       - name: Rule-index sync check
         run: ./scripts/check-rule-index.sh
-      - name: Docker Hub README portability
-        run: ./scripts/check-readme-dockerhub.sh
       - name: Environment variables are documented and tested
         run: ./scripts/check-env-matrix.sh
 
@@ -102,11 +106,21 @@ jobs:
         with:
           context: .
           load: true
-          tags: mailkube/smtp-relay:scan
+          tags: ghcr.io/mailkube/smtp-relay:scan
+      # Trivy runs from its own published image rather than through
+      # aquasecurity/trivy-action. The action delegates to setup-trivy, which
+      # downloads the binary through a shell installer that resolves the
+      # release over the GitHub API; on a shared runner IP that lookup gets
+      # rate-limited and reports the version as missing ("unable to find
+      # 'v0.70.0'") even though the release exists. The image has no such step.
+      # Pulled from ghcr.io, not Docker Hub, so an anonymous pull limit cannot
+      # break the build either.
       - name: Trivy
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: mailkube/smtp-relay:scan
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/trivy" \
+            ghcr.io/aquasecurity/trivy:0.73.0 image \
+              --image-src docker \
+              --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 \
+              ghcr.io/mailkube/smtp-relay:scan

@@ -14,5 +14,9 @@ max_line_length = 120
 [*.{yml,yaml,json,toml,md,js,jsx,ts,tsx,cjs,mjs}]
 indent_size = 2
 
+# Matches the enforced `shfmt -i 2 -ci -sr` gate. See .rules/ENTRYPOINT.md.
+[*.sh]
+indent_size = 2
+
 [Makefile]
 indent_style = tab

@@ -21,14 +21,17 @@ PORT="${LISTEN_PORT:-25}"
 # against a perfectly healthy relay. Waiting for the banner also keeps the
 # server-side log line clean (quit=1 commands=1 rather than a pipelining error
 # every 30 seconds).
-resp="$( (sleep 0.5; printf 'QUIT\r\n') | nc -w 3 127.0.0.1 "$PORT" 2>/dev/null | head -n 1 || true)"
+resp="$( (
+  sleep 0.5
+  printf 'QUIT\r\n'
+) | nc -w 3 127.0.0.1 "$PORT" 2> /dev/null | head -n 1 || true)"
 
 case "$resp" in
-220*)
-	exit 0
-	;;
-*)
-	echo "healthcheck: no SMTP banner on 127.0.0.1:${PORT} (got: ${resp:-<nothing>})" >&2
-	exit 1
-	;;
+  220*)
+    exit 0
+    ;;
+  *)
+    echo "healthcheck: no SMTP banner on 127.0.0.1:${PORT} (got: ${resp:-<nothing>})" >&2
+    exit 1
+    ;;
 esac

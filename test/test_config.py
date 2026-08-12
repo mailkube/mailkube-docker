@@ -200,3 +200,24 @@ def test_t12c_all_overrides_together_produce_a_clean_preflight(factory):
     assert "preflight passed" in logs
     assert relay.postconf_one("smtp_destination_concurrency_limit") == "3"
     assert relay.postconf_one("message_size_limit") == "15728640"
+
+
+def test_t12e_timezone_defaults_to_utc(pair):
+    """Log timestamps are UTC unless the operator says otherwise.
+
+    Postfix stamps maillog lines from the process's local time, so an unset TZ
+    would silently inherit whatever the base image happens to default to.
+    """
+    _, relay = pair
+    assert relay.exec("sh", "-c", "date +%Z").stdout.strip() == "UTC"
+
+
+def test_t12e_timezone_is_overridable(factory):
+    """`TZ` must actually take effect, which also proves tzdata is installed.
+
+    Alpine ships no zoneinfo database by default: without the tzdata package an
+    override is accepted, exported, and then silently ignored, leaving UTC.
+    """
+    factory.sink()
+    relay = factory.relay(TZ="Europe/Paris")
+    assert relay.exec("sh", "-c", "date +%Z").stdout.strip() in {"CET", "CEST"}

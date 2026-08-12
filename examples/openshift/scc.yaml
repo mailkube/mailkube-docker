@@ -1,6 +1,6 @@
 # =============================================================================
 #  scc.yaml
-#  A custom SecurityContextConstraints for mailkube/smtp-relay on OpenShift.
+#  A custom SecurityContextConstraints for ghcr.io/mailkube/smtp-relay on OpenShift.
 # =============================================================================
 #
 #  WHY THIS EXISTS: OpenShift's default `restricted-v2` SCC assigns every pod a
@@ -33,7 +33,7 @@ metadata:
   name: mailkube-smtp-relay
   annotations:
     kubernetes.io/description: >-
-      Allows the mailkube/smtp-relay Postfix container to run as root with the
+      Allows the ghcr.io/mailkube/smtp-relay Postfix container to run as root with the
       six capabilities Postfix requires. Grant to the relay's ServiceAccount
       only. Everything beyond an arbitrary UID and those capabilities is denied.
 
