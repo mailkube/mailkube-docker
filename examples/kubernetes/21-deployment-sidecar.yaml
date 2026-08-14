@@ -28,7 +28,7 @@
 #  -------------------------------------------------------------------------
 #  FLEET CONNECTION BUDGET, read before setting `replicas`:
 #
-#      instances x RELAY_CONCURRENCY <= 18
+#      instances x RELAY_CONCURRENCY <= 9
 #
 #  The upstream edge rejects at 20 concurrent connections PER SOURCE IP, and
 #  that source IP is your cluster's shared egress NAT address. In sidecar mode

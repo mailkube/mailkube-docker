@@ -66,7 +66,15 @@ def test_t07_bounce_recipient_must_be_at_the_authenticated_domain(factory):
 
 
 def test_t08_concurrency_above_the_ceiling_is_refused(factory):
-    _fails(factory, "between 1 and 10", SMTP_USERNAME="a@b.com", SMTP_PASSWORD="x", RELAY_CONCURRENCY="25")
+    _fails(factory, "between 1 and 9", SMTP_USERNAME="a@b.com", SMTP_PASSWORD="x", RELAY_CONCURRENCY="25")
+
+
+def test_t08b_concurrency_of_ten_breaches_the_ceiling_alone(factory):
+    """10 holds 20 connections, the whole per-source-IP ceiling, with no fleet involved.
+
+    The boundary is the point of the rule, so it is pinned: 9 boots, 10 does not.
+    """
+    _fails(factory, "between 1 and 9", SMTP_USERNAME="a@b.com", SMTP_PASSWORD="x", RELAY_CONCURRENCY="10")
 
 
 @pytest.mark.parametrize(

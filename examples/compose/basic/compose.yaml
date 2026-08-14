@@ -20,9 +20,10 @@
 #  The relay accepts UNAUTHENTICATED mail from anything that can reach port 25.
 #  It is not published to the host here, and it must not be exposed publicly.
 #
-#  Fleet connection budget: instances x RELAY_CONCURRENCY <= 18, because the
-#  upstream edge rejects at 20 concurrent connections per source IP and that IP
-#  is your host's shared egress address.
+#  Fleet connection budget: instances x RELAY_CONCURRENCY <= 9, because the
+#  upstream edge rejects at 20 concurrent connections per source IP, that IP
+#  is your host's shared egress address, and each unit of concurrency holds two
+#  connections: one delivering, one cached idle for reuse.
 # =============================================================================
 
 services:

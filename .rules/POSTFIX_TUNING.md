@@ -126,12 +126,24 @@ Upstream HAProxy rejects at `src_conn_cur ge 20` **per source IP**, and the sour
 egress NAT shared by every replica and by anything else sending from behind it. The usable ceiling is
 19.
 
-> **FLEET RULE: `instances × RELAY_CONCURRENCY ≤ 18`**, with a floor of one connection per running
-> instance regardless of concurrency, because idle cached connections occupy slots too.
+> **FLEET RULE: `instances × RELAY_CONCURRENCY × 2 ≤ 18`**, equivalently
+> `instances × RELAY_CONCURRENCY ≤ 9`, with a floor of two connections per running instance.
+
+**The factor of two is not headroom, it is measured.** `RELAY_CONCURRENCY` sets
+`smtp_destination_concurrency_limit`, which bounds concurrent *deliveries*. It does not bound
+concurrent *sockets*. Because `smtp_tls_connection_reuse = yes`, a finished delivery hands its socket
+to `scache(8)`, which holds it open for `smtp_connection_cache_time_limit` (45s). While that idle
+socket waits to be reused it still occupies a HAProxy slot. Under sustained load a relay therefore
+holds `RELAY_CONCURRENCY` active sockets plus up to `RELAY_CONCURRENCY` cached idle ones.
+
+Measured against the test sink at steady state, peak sockets came to exactly `2 × RELAY_CONCURRENCY`
+for concurrency 1, 2 and 4 (`peak = 2C`, `connections = 2C + 1`, `auths = C`). T-15 in
+`test/test_relay.py` pins this and fails if the factor grows.
 
 In sidecar mode "instances" is the customer's **application pod count**, which this container cannot
-see and therefore cannot validate. `validate.sh` warns above `RELAY_CONCURRENCY=4` and states the rule;
-the README must state it too.
+see and therefore cannot validate. `validate.sh` warns above `RELAY_CONCURRENCY=2` and states the rule;
+the README must state it too. It also caps the accepted range at 9 rather than 10: at 10 a single
+instance holds 20 connections and breaches the ceiling alone, so that is a rejection, not a warning.
 
 `smtp_destination_concurrency_limit = 2` (the default for `RELAY_CONCURRENCY`) is chosen from both
 ends: 2 rather than more because with reuse the throughput per connection is RTT-bound, not

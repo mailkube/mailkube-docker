@@ -25,9 +25,10 @@
 #  capabilities Postfix actually uses, plus the ability to write anywhere except
 #  the queue, its state directory, and two tmpfs mounts.
 #
-#  Fleet connection budget: instances x RELAY_CONCURRENCY <= 18, because the
+#  Fleet connection budget: instances x RELAY_CONCURRENCY <= 9, because the
 #  upstream edge rejects at 20 concurrent connections per source IP, which is
-#  your host's shared egress address.
+#  your host's shared egress address, and each unit of concurrency holds two
+#  connections: one delivering, one cached idle for reuse.
 # =============================================================================
 
 services:
