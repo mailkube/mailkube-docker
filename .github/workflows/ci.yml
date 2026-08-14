@@ -3,8 +3,11 @@ name: CI
 # Job names `test`, `dry` and `docs` are referenced by branch protection.
 # Never rename them; add new jobs alongside instead.
 on:
-  push:
-    branches: [main]
+  # No `push: branches: [main]` trigger on purpose. release.yml already runs this entire workflow
+  # through `workflow_call` on every push to `main`, and both runs land in the same
+  # `ci-${{ github.ref }}` concurrency group with cancel-in-progress. A direct trigger therefore
+  # only ever races the gated one: one of the two is cancelled, and the cancelled run is what the
+  # README's CI badge reports. `main` stays fully covered by release.yml's ci-gate job.
   pull_request:
   workflow_call: # so release.yml can gate on the full CI
 
