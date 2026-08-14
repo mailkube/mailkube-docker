@@ -2,8 +2,6 @@ name: PR Title
 
 # Enforce Conventional Commits on the PR title, since PRs are squash-merged using it.
 # Only `feat:`, `fix:`, and `perf:` trigger a release on `main`.
-# NOTE: rendered verbatim (see `_copy_without_render` in cookiecutter.json) so GitHub Actions
-# `${{ ... }}` expressions are not mangled by Cookiecutter's Jinja pass.
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
