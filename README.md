@@ -229,10 +229,13 @@ file created by `echo` embeds a newline, and that is the single most common caus
 | `RELAY_CONCURRENCY` | `2` | Parallel connections upstream. Read the fleet rule below before raising. |
 | `RELAY_MSG_RATE` | | Your plan's messages/second. `1` or lower enables a 1s pacing delay. |
 
-> **Fleet rule:** `instances × RELAY_CONCURRENCY ≤ 18`. Mailkube's edge rejects at 20 concurrent
-> connections **per source IP**, which is your cluster's shared egress NAT address, not per pod. Nine
-> relay replicas at the default concurrency fit. In sidecar mode "instances" is your application pod
-> count, so cap it at roughly 8 app pods per egress address.
+> **Fleet rule:** `instances × RELAY_CONCURRENCY ≤ 9`. Mailkube's edge rejects at 20 concurrent
+> connections **per source IP**, which is your cluster's shared egress NAT address, not per pod.
+> Each concurrency slot costs **two** connection slots upstream, not one: connection reuse keeps a
+> finished connection open and idle for up to 45 seconds so the next message can reuse it, and an
+> idle connection still occupies a slot. Four relay replicas at the default concurrency fit. In
+> sidecar mode "instances" is your application pod count, so cap it at roughly 4 app pods per egress
+> address.
 
 `RELAY_MSG_RATE` is off by default because we cannot know your plan from inside the container, and
 Postfix's minimum pacing interval is one second, which would throttle higher tiers by 6x. Enabling
@@ -373,7 +376,7 @@ the `oc adm policy` command.
 | Mailkube limit | Value | What the relay does | If you exceed it |
 |---|---|---|---|
 | Authentications | 2/sec per domain | Reuses one authenticated connection for up to 90 messages | `454 4.7.0`, plus a risk signal |
-| Concurrent connections | 20 per source IP | `RELAY_CONCURRENCY=2`, ramping from 1 on cold start | TCP reject, no SMTP reply |
+| Concurrent connections | 20 per source IP | `RELAY_CONCURRENCY=2`, ramping from 1 on cold start, costing 4 slots at steady state | TCP reject, no SMTP reply |
 | Messages | 1 to 6/sec by plan | Queues and retries; optional `RELAY_MSG_RATE` pacing | `450 4.7.1`, plus a risk signal |
 | Message size | 10/15/25 MB by plan, 20 MiB at the edge | Rejects locally at `MESSAGE_SIZE_LIMIT` | `552` locally, or `5.3.4` upstream |
 | Recipients | 1 to 50 by plan | Splits into batches of `RECIPIENT_LIMIT` | `5.5.3` |

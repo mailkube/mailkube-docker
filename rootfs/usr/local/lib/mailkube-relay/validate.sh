@@ -119,11 +119,19 @@ validate_env() {
 
   # Upstream HAProxy rejects at 20 concurrent connections PER SOURCE IP, which
   # is per cluster egress NAT and therefore shared across every replica.
-  assert_int_range RELAY_CONCURRENCY "$RELAY_CONCURRENCY" 1 10
-  if [ "$RELAY_CONCURRENCY" -gt 4 ]; then
+  #
+  # The ceiling is 9, not 10, because each unit of concurrency holds TWO
+  # connections: one delivering and one cached idle awaiting reuse. At 10 a
+  # single instance would hold 20 and breach the ceiling on its own, with no
+  # fleet involved, so that value is rejected rather than warned about.
+  assert_int_range RELAY_CONCURRENCY "$RELAY_CONCURRENCY" 1 9
+  # Warn above 2 (the default), which is 4 of the 19 usable slots. The previous
+  # threshold of 4 predates the x2 and stayed silent at 8 slots.
+  if [ "$RELAY_CONCURRENCY" -gt 2 ]; then
     log_warn "RELAY_CONCURRENCY=${RELAY_CONCURRENCY}. The upstream rejects at 20 concurrent connections"
     log_warn "per source IP, shared by every replica behind your cluster's egress address."
-    log_warn "Keep (instances x RELAY_CONCURRENCY) at or below 18."
+    log_warn "Each unit of concurrency holds TWO connections: one delivering, one cached idle for reuse."
+    log_warn "Keep (instances x RELAY_CONCURRENCY) at or below 9."
   fi
 
   if [ -n "$RELAY_MSG_RATE" ]; then

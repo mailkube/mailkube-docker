@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import smtplib
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -186,13 +187,50 @@ def test_t14c_counter_factual_reuse_disabled_costs_one_auth_per_message(pair):
     )
 
 
-def test_t15_peak_concurrency_respects_the_limit(pair):
-    """The upstream rejects at 20 concurrent connections per SOURCE IP."""
-    sink, relay = pair
-    for i in range(15):
-        relay.send(message(subject=f"conc {i}", to=f"k{i}@example.net"))
-    sink.wait_for_messages(15)
-    assert sink.stats()["peak_concurrent"] <= 2
+#  Sockets are not deliveries. `smtp_destination_concurrency_limit` bounds how many
+#  messages Postfix delivers at once, but with `smtp_tls_connection_reuse = yes` a
+#  finished delivery hands its socket to scache(8), which holds it OPEN for
+#  `smtp_connection_cache_time_limit` (45s). An idle cached socket still occupies a
+#  HAProxy slot, so what the upstream ceiling actually sees is twice the configured
+#  concurrency. Measured at exactly 2x for RELAY_CONCURRENCY 1, 2 and 4.
+#
+#  This factor is the reason the fleet rule divides by two; see the fleet connection
+#  budget in .rules/POSTFIX_TUNING.md. If this test starts failing high, the published
+#  rule is wrong and customers will be banned for following it.
+SOCKETS_PER_CONCURRENCY_SLOT = 2
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("concurrency", [1, 2, 4])
+def test_t15_peak_sockets_stay_within_the_fleet_budget(factory, concurrency):
+    """The upstream rejects at 20 concurrent connections per SOURCE IP.
+
+    Sends in parallel on purpose. Sequential submission drains the queue as fast as it
+    fills, so the concurrency limit is never actually reached and the observed peak
+    depends on scheduling luck, which is what made the original form of this test flaky.
+    """
+    sink = factory.sink()
+    relay = factory.relay(RELAY_CONCURRENCY=str(concurrency))
+    count = 30
+
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        list(pool.map(lambda i: relay.send(message(subject=f"conc {i}", to=f"k{i}@example.net")), range(count)))
+    sink.wait_for_messages(count)
+
+    peak = sink.stats()["peak_concurrent"]
+    ceiling = SOCKETS_PER_CONCURRENCY_SLOT * concurrency
+    assert peak <= ceiling, (
+        f"RELAY_CONCURRENCY={concurrency} peaked at {peak} upstream sockets, above the {ceiling} the "
+        f"fleet rule budgets for. Every socket over budget is a HAProxy slot the fleet rule does not "
+        f"account for, and the published rule now understates the ban risk."
+    )
+    #  Counter-factual: if the queue never built, the ceiling above was never approached
+    #  and the assertion proved nothing.
+    assert peak > concurrency, (
+        f"expected reuse to leave idle cached sockets open alongside the {concurrency} active "
+        f"delivery slots, but peaked at only {peak}. The parallel blast is no longer creating queue "
+        f"pressure, so this test has stopped measuring the ceiling it claims to measure."
+    )
 
 
 def test_auth_identity_is_user_at_domain(pair):

@@ -13,14 +13,16 @@
 #  -------------------------------------------------------------------------
 #  FLEET CONNECTION BUDGET, read before changing `replicas`:
 #
-#      instances x RELAY_CONCURRENCY <= 18
+#      instances x RELAY_CONCURRENCY <= 9
 #
 #  The upstream edge rejects at 20 concurrent connections PER SOURCE IP, and
 #  that source IP is your cluster's shared egress NAT address, not the pod IP.
 #  Every replica, plus anything else sending from behind the same NAT, spends
-#  from the same 20. With the default RELAY_CONCURRENCY=2 the ceiling is 9
-#  replicas. Two replicas, as configured below, is the right starting point for
-#  almost everyone: throughput here is round-trip bound, not connection bound.
+#  from the same 20. Each unit of concurrency holds TWO connections, one
+#  delivering and one cached idle for reuse, so the budget is halved. With the
+#  default RELAY_CONCURRENCY=2 the ceiling is 4 replicas. Two replicas, as
+#  configured below, is the right starting point for almost everyone:
+#  throughput here is round-trip bound, not connection bound.
 #
 #  DO NOT put a HorizontalPodAutoscaler on this workload. An HPA reacts to a
 #  queue backlog by adding replicas, which spends more connections against a

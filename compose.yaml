@@ -31,9 +31,10 @@
 #
 #  Fleet connection budget:
 #    The upstream edge rejects at 20 concurrent connections PER SOURCE IP, and
-#    that source IP is your whole host or cluster's egress address. Keep
-#    (number of relay instances x RELAY_CONCURRENCY) at or below 18. With the
-#    default RELAY_CONCURRENCY=2 that is 9 relay instances per egress IP.
+#    that source IP is your whole host or cluster's egress address. Each unit
+#    of concurrency holds two connections, one delivering and one cached idle
+#    for reuse, so keep (relay instances x RELAY_CONCURRENCY) at or below 9.
+#    With the default RELAY_CONCURRENCY=2 that is 4 relay instances per egress IP.
 # =============================================================================
 
 services:

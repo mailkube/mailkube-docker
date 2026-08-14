@@ -57,8 +57,10 @@ The job name `docs` is a branch-protection required check. Never rename it; see 
 - **Every number in the docs must match the code.** The environment variable table's defaults come from
   `rootfs/usr/local/lib/mailkube-relay/env.sh`; the limits come from `main.cf`. A docs change that
   contradicts the source is a bug, not a wording preference.
-- **State the fleet rule wherever concurrency appears**: `instances × RELAY_CONCURRENCY ≤ 18`, because
-  the container cannot see the instance count and cannot validate it.
+- **State the fleet rule wherever concurrency appears**: `instances × RELAY_CONCURRENCY ≤ 9`, because
+  the container cannot see the instance count and cannot validate it. Say why the budget is halved:
+  each unit of concurrency holds two upstream connections, one delivering and one cached idle for
+  reuse, and an idle connection still occupies a slot.
 - **State the security model plainly**: the ingress listener is unauthenticated by design; `mynetworks`
   is the second line of defence and network isolation is the first. Point at
   `examples/kubernetes/30-networkpolicy.yaml`.

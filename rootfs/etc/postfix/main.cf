@@ -155,10 +155,15 @@ smtp_connection_reuse_count_limit = 90
 #  egress NAT, shared by every replica and anything else sending from behind it.
 #  The usable ceiling is 19.
 #
-#  FLEET RULE: instances x smtp_destination_concurrency_limit <= 18, with a floor
-#  of one connection per running instance regardless of concurrency (idle cached
-#  connections occupy slots too). In sidecar mode "instances" is the customer's
-#  APP POD COUNT, which this container cannot see or validate.
+#  FLEET RULE: instances x smtp_destination_concurrency_limit x 2 <= 18, with a
+#  floor of two connections per running instance. In sidecar mode "instances" is
+#  the customer's APP POD COUNT, which this container cannot see or validate.
+#
+#  The x2 is measured, not padding. This setting bounds concurrent DELIVERIES,
+#  not concurrent SOCKETS: with smtp_tls_connection_reuse a finished delivery
+#  hands its socket to scache(8), which holds it OPEN for 45s waiting to be
+#  reused, and an idle socket still occupies a HAProxy slot. Steady-state peak
+#  measures at exactly 2x this value. See T-15 in test/test_relay.py.
 #
 #  2 rather than more: with reuse, throughput per connection is RTT-bound, not
 #  connection-bound, so extra concurrency buys nothing and only spends HAProxy
