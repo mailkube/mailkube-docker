@@ -506,4 +506,4 @@ never be re-derived. Security issues: see [SECURITY.md](SECURITY.md).
 
 ## License
 
-[Apache-2.0](LICENSE) © 2026 Mailtactic, Corp.
+[Apache-2.0](LICENSE) © 2026 Mail Tactic Corporation
