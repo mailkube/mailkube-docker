@@ -46,17 +46,68 @@ jobs:
               --format table --output trivy.txt --exit-code 1 \
               ghcr.io/mailkube/smtp-relay:latest
 
-      - name: Open an issue on findings
+      # Filing the same finding again every week buries it. Find the issue this job
+      # already opened and comment on it instead, so one finding stays one thread
+      # and how long it has stood is visible in it.
+      #
+      # issues.listForRepo, not search.issuesAndPullRequests: search is a separate,
+      # eventually consistent index that can miss an issue filed minutes or days
+      # ago, which reintroduces the duplicate this step exists to prevent.
+      # listForRepo returns pull requests as issues too, hence the pull_request
+      # filter on the match.
+      - name: Open or update the findings issue
         if: failure()
         uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
-            const body = fs.existsSync('trivy.txt') ? fs.readFileSync('trivy.txt', 'utf8') : 'Trivy produced no report.';
-            await github.rest.issues.create({
+            const report = fs.existsSync('trivy.txt') ? fs.readFileSync('trivy.txt', 'utf8') : 'Trivy produced no report.';
+            const title = 'Security: fixable CRITICAL/HIGH findings in ghcr.io/mailkube/smtp-relay:latest';
+
+            // The remedy is a REBUILD, not a base image digest bump. Everything reported
+            // here is fixable (--ignore-unfixed) and the Dockerfile runs `apk upgrade`, so
+            // any rebuild picks up the pinned Alpine release's current patch levels. A
+            // digest bump is usually not even available: Docker Hub does not rebuild
+            // `alpine:3.24` per Alpine security update, so the tag can sit on the pinned
+            // digest for weeks while the v3.24 repository already carries the fix. Saying
+            // "bump the digest" here sent a real finding (CVE-2026-14456) nowhere for a
+            // week. `latest` only moves on a release, so the rebuild means cutting one.
+            const remedy = [
+              'Weekly scan of the **published** image found fixable vulnerabilities.',
+              '',
+              'Rebuild `:latest` by merging `develop` into `main`, which cuts a release. The Dockerfile',
+              'runs `apk upgrade`, so any rebuild picks up the current patch levels of the pinned Alpine',
+              'release. A base image digest bump is neither required nor usually available.',
+            ].join('\n');
+            const body = `${remedy}\n\n\`\`\`\n${report.slice(0, 60000)}\n\`\`\``;
+
+            // Oldest first, so if duplicates already exist the canonical thread is the
+            // one that keeps accruing history rather than the newest copy.
+            const open = (await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Security: fixable CRITICAL/HIGH findings in ghcr.io/mailkube/smtp-relay:latest`,
-              labels: ['security'],
-              body: "Weekly scan of the published image found fixable vulnerabilities.\n\nRebuild against a current base image digest.\n\n```\n" + body.slice(0, 60000) + "\n```",
-            });
+              state: 'open',
+              labels: 'security',
+              sort: 'created',
+              direction: 'asc',
+              per_page: 100,
+            })).find((i) => !i.pull_request && i.title === title);
+
+            if (open) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: open.number,
+                body: `Still present as of this run.\n\n${body}`,
+              });
+              core.notice(`Updated existing issue #${open.number}`);
+            } else {
+              const { data } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                labels: ['security'],
+                body,
+              });
+              core.notice(`Opened issue #${data.number}`);
+            }
