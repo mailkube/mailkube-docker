@@ -9,5 +9,12 @@ ignored:
   # superseded versions. Digest-pinned base + floating patch versions is the
   # combination that gets reproducible builds AND security updates.
   # Dependabot bumps the base digest; see .github/dependabot.yml.
+  #
+  # That covers the packages `apk add` installs, but not the ones already in the
+  # base layer (libcrypto3, libssl3, musl, busybox, apk-tools). Those only move
+  # when Docker Hub rebuilds `alpine:3.24`, which it does not do per Alpine
+  # security update. `apk upgrade` in the Dockerfile closes that gap, and DL3017
+  # is waived inline at that RUN rather than here, so the waiver stays scoped to
+  # the one line that needs it. See .rules/CONTAINER.md.
   - DL3018
 failure-threshold: warning

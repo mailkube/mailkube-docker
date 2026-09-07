@@ -28,8 +28,26 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 #  and an assertion could pass against no output at all.
 SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 
-# hadolint ignore=DL3018
-RUN apk add --no-cache \
+#  `apk upgrade` runs first, and DL3017 is waived for it.
+#
+#  The digest pin fixes the base image's package snapshot, and `apk add` floats
+#  only the packages it installs. Everything already in the base layer (musl,
+#  busybox, apk-tools, libcrypto3, libssl3) stays at whatever the pinned digest
+#  shipped, indefinitely. Docker Hub does not rebuild `alpine:3.24` for every
+#  Alpine security update, so a CVE fixed in the v3.24 repository cannot reach
+#  this image through a Dependabot digest bump: there is no new digest to bump
+#  to. That is not hypothetical. CVE-2026-14456 (openssl, fixed in 3.5.8-r0)
+#  sat in libcrypto3/libssl3 at 3.5.7-r0 while `alpine:3.24` still resolved to
+#  the digest pinned above, and the `scan` job stayed red on every PR.
+#
+#  DL3017's objection to `apk upgrade` is that the base image should be updated
+#  instead. Here it cannot be, so this is the only path. Reproducibility is
+#  unchanged, and for the same reason `apk add` keeps it: the digest fixes the
+#  release and therefore the repository, and both commands resolve against that
+#  one repository's current patch levels.
+# hadolint ignore=DL3017,DL3018
+RUN apk upgrade --no-cache && \
+    apk add --no-cache \
     postfix \
     postfix-pcre \
     cyrus-sasl \
