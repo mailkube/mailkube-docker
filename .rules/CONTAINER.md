@@ -22,6 +22,26 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 - **Always pinned by digest.** Dependabot bumps the digest; a bump PR must be re-tested, not
   auto-merged, because it can move the Postfix version and therefore every default in
   `.rules/POSTFIX_TUNING.md`.
+- **The digest bump is not the patch mechanism.** Docker Hub does not rebuild `alpine:3.24` on every
+  Alpine security update, so for long stretches there is no new digest for Dependabot to offer while
+  the v3.24 repository has already shipped the fix. That is what `apk upgrade` in the `Dockerfile` is
+  for; see below.
+
+### Why `apk upgrade` runs, and why DL3017 is waived for it
+
+`apk add` floats only the packages it installs. Everything already in the base layer (`musl`,
+`busybox`, `apk-tools`, `libcrypto3`, `libssl3`) is frozen at whatever the pinned digest shipped, and
+stays there until upstream rebuilds the tag. `apk upgrade --no-cache` in the same `RUN` moves that set
+to the pinned release's current patch levels.
+
+This is load-bearing, not defensive. CVE-2026-14456 (openssl, fixed in Alpine v3.24 as `3.5.8-r0`) sat
+in `libcrypto3`/`libssl3` at `3.5.7-r0` with `alpine:3.24` still resolving to the pinned digest, so the
+`scan` job went red on every unrelated PR with no digest bump available to clear it.
+
+DL3017 ("do not use `apk upgrade`") assumes the base image can be updated instead. Here it cannot, so
+the waiver is correct, and it is inline at that one `RUN` rather than in `.hadolint.yaml` so it cannot
+spread. Reproducibility is unchanged for the same reason it is unchanged for `apk add`: the digest
+fixes the release and therefore the repository, and both commands resolve against that one repository.
 
 ### Why DL3018 is waived
 
