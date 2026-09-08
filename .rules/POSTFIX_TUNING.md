@@ -46,7 +46,7 @@ the intermediate names instead is a common half-fix.
 
 `smtp_connect.c` parses the nexthop into a bare domain before matching, and `match_list.c` exempts
 `[`-prefixed patterns from parsing. A bracketed value therefore never matches: no error, no warning,
-and a clean `postfix check`. The correct value is identical for 587 and 465, so the entrypoint must
+and a clean `postfix check`. The correct value carries no port, so the entrypoint must
 **never** template a port into it. It is the one upstream-related value `render.sh` deliberately does
 not touch.
 
@@ -159,9 +159,10 @@ exactly one destination that is a total outage triggered by one bad packet.
 - `in_flow_delay = 0s`. Postfix's 1s default throttles **ingest** when the queue outpaces delivery,
   which makes the application's `send()` block precisely when upstream is throttled. That is the exact
   negation of this product's reason to exist.
-- `message_size_limit = 20971520`. The Postfix default of 10240000 (9.77 MiB) is **below** even the
+- `message_size_limit = 26214400`. The Postfix default of 10240000 (9.77 MiB) is **below** even the
   Free tier's 10485760, so left unset this relay would locally 552 messages the platform accepts,
-  quoting a number that appears in no plan. 20971520 matches the upstream submission listener.
+  quoting a number that appears in no plan. 26214400 matches the upstream submission listener and
+  the top (Enterprise) plan entitlement.
 - `minimal_backoff_time = 120s` and `queue_run_delay = 120s`. `queue_run_delay` must stay at or below
   `minimal_backoff_time` or the backoff never takes effect. 120s rather than Postfix's 300s because
   upstream 4xx windows are one second wide; 120s rather than the 30s of an earlier revision because a

@@ -32,7 +32,7 @@ def test_t02_upstream_port_25_is_rejected_with_the_ban_warning(factory):
 
 
 def test_t03_arbitrary_upstream_port_is_rejected(factory):
-    _fails(factory, "must be 587 or 465", SMTP_USERNAME="a@b.com", SMTP_PASSWORD="x", SMTP_PORT="2525")
+    _fails(factory, "must be 587", SMTP_USERNAME="a@b.com", SMTP_PASSWORD="x", SMTP_PORT="2525")
 
 
 def test_t04_open_relay_cidr_is_refused(factory):

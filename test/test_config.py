@@ -13,19 +13,19 @@ import pytest
 def test_t11_relayhost_is_the_hardcoded_upstream_on_587(pair):
     _, relay = pair
     assert relay.postconf_one("relayhost") == "[smtp.mailkube.com]:587"
+    assert relay.postconf_one("smtp_tls_wrappermode") == "no"
 
 
-def test_t11b_port_465_switches_to_implicit_tls_and_keeps_one_relayhost_line(factory):
-    """The 465 path must set wrappermode AND must not leave a duplicate relayhost.
+def test_t11b_overrides_keep_one_relayhost_line(factory):
+    """Overrides must not leave a duplicate relayhost.
 
     A duplicate would emit "overriding earlier entry" on stderr, which the boot
     preflight treats as fatal. This is the regression that ruled out an
     append-only overlay in favour of a batched `postconf -e`.
     """
-    factory.sink(SINK_PORT="465", SINK_IMPLICIT_TLS="yes")
-    relay = factory.relay(SMTP_PORT="465")
-    assert relay.postconf_one("relayhost") == "[smtp.mailkube.com]:465"
-    assert relay.postconf_one("smtp_tls_wrappermode") == "yes"
+    factory.sink(SINK_PORT="587")
+    relay = factory.relay(SMTP_PORT="587")
+    assert relay.postconf_one("relayhost") == "[smtp.mailkube.com]:587"
     count = relay.exec("sh", "-c", "grep -c '^relayhost' /run/postfix/main.cf").stdout.strip()
     assert count == "1", "main.cf must contain exactly one relayhost definition"
 
@@ -98,7 +98,7 @@ def test_t12_cache_time_differs_from_queue_run_delay(pair):
         ("initial_destination_concurrency", "1"),
         ("smtp_destination_concurrency_limit", "2"),
         ("smtp_destination_concurrency_failed_cohort_limit", "10"),
-        ("message_size_limit", "20971520"),
+        ("message_size_limit", "26214400"),
         ("smtp_line_length_limit", "998"),
         ("minimal_backoff_time", "120s"),
         ("queue_run_delay", "120s"),
@@ -186,9 +186,9 @@ def test_t12b_preflight_rejects_a_misspelled_parameter(factory):
 
 def test_t12c_all_overrides_together_produce_a_clean_preflight(factory):
     """The combination that an append-only overlay would have made unbootable."""
-    factory.sink(SINK_PORT="465", SINK_IMPLICIT_TLS="yes")
+    factory.sink(SINK_PORT="587")
     relay = factory.relay(
-        SMTP_PORT="465",
+        SMTP_PORT="587",
         RELAY_NETWORKS="10.42.0.0/16,192.168.5.0/24",
         RELAY_CONCURRENCY="3",
         MESSAGE_SIZE_LIMIT="15728640",

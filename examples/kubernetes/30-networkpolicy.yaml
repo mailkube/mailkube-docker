@@ -127,7 +127,7 @@ spec:
           port: 53
 
     # --- upstream submission -------------------------------------------------
-    # 587 (STARTTLS, the default) and 465 (implicit TLS). Port 25 is
+    # 587 (STARTTLS). Port 25 is
     # deliberately NOT allowed outbound: this relay never delivers directly to
     # third-party mail servers, and upstream port 25 is bounce intake only.
     #
@@ -149,5 +149,3 @@ spec:
       ports:
         - protocol: TCP
           port: 587
-        - protocol: TCP
-          port: 465

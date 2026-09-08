@@ -76,7 +76,7 @@ flowchart LR
       smtp["smtp client<br/>TLS + AUTH PLAIN"]
     end
   end
-  mk["smtp.mailkube.com<br/>:587 or :465"]
+  mk["smtp.mailkube.com<br/>:587"]
   rcpt["recipient"]
 
   app1 -->|"plain SMTP"| smtpd
@@ -174,7 +174,7 @@ messages sent 3 seconds apart cost **1** authentication. With reuse disabled the
 2. **An SMTP credential** for that domain, created at
    [app.mailkube.com/domain/credentials#smtp](https://app.mailkube.com/domain/credentials#smtp).
    The password is shown once.
-3. Outbound access to `smtp.mailkube.com` on port **587** or **465** from your cluster. HTTP and
+3. Outbound access to `smtp.mailkube.com` on port **587** from your cluster. HTTP and
    SOCKS proxies do not work; Postfix speaks SMTP directly.
 
 Two details that cause most first-run failures:
@@ -212,7 +212,7 @@ file created by `echo` embeds a newline, and that is the single most common caus
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SMTP_PORT` | `587` | `587` (STARTTLS) or `465` (implicit TLS). Nothing else is accepted. |
+| `SMTP_PORT` | `587` | `587` (STARTTLS). Nothing else is accepted. |
 | `LISTEN_PORT` | `25` | The port the relay listens on. Set to e.g. `1025` to drop `NET_BIND_SERVICE`. |
 | `RELAY_NETWORKS` | | Extra CIDRs allowed to send, comma separated. |
 | `RELAY_NETWORKS_MODE` | `append` | `append` adds to the private-range defaults; `replace` uses only your list. Loopback is always kept. |
@@ -223,7 +223,7 @@ file created by `echo` embeds a newline, and that is the single most common caus
 
 | Variable | Default | Notes |
 |---|---|---|
-| `MESSAGE_SIZE_LIMIT` | `20971520` | 20 MiB, matching the upstream listener cap. |
+| `MESSAGE_SIZE_LIMIT` | `26214400` | 25 MiB, matching the upstream listener cap and the top plan. |
 | `RECIPIENT_LIMIT` | `50` | Recipients per delivery batch. |
 | `MAX_QUEUE_LIFETIME` | `1d` | How long to keep retrying. Set `1h` for OTP and password-reset traffic. |
 | `RELAY_CONCURRENCY` | `2` | Parallel connections upstream. Read the fleet rule below before raising. |
@@ -378,9 +378,9 @@ the `oc adm policy` command.
 | Authentications | 2/sec per domain | Reuses one authenticated connection for up to 90 messages | `454 4.7.0`, plus a risk signal |
 | Concurrent connections | 20 per source IP | `RELAY_CONCURRENCY=2`, ramping from 1 on cold start, costing 4 slots at steady state | TCP reject, no SMTP reply |
 | Messages | 1 to 6/sec by plan | Queues and retries; optional `RELAY_MSG_RATE` pacing | `450 4.7.1`, plus a risk signal |
-| Message size | 10/15/25 MB by plan, 20 MiB at the edge | Rejects locally at `MESSAGE_SIZE_LIMIT` | `552` locally, or `5.3.4` upstream |
+| Message size | 10/15/25 MB by plan, 25 MiB at the edge | Rejects locally at `MESSAGE_SIZE_LIMIT` | `552` locally, or `5.3.4` upstream |
 | Recipients | 1 to 50 by plan | Splits into batches of `RECIPIENT_LIMIT` | `5.5.3` |
-| Submission ports | 587, 465 | Refuses any other value | n/a |
+| Submission port | 587 | Refuses any other value | n/a |
 
 > **Rate rejections are not free.** Every `450` and `454` raises a risk signal against the
 > connecting IP. 100 message-rate rejections in 30 minutes, or 20 authentication-rate rejections in

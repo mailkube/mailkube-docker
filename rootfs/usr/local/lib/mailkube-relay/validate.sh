@@ -86,14 +86,14 @@ validate_env() {
 
   # --- upstream port -----------------------------------------------------
   case "$SMTP_PORT" in
-    587 | 465) ;;
+    587) ;;
     25)
       die_hint "SMTP_PORT=25 is not a submission port on smtp.mailkube.com." \
-        "Use 587 (STARTTLS) or 465 (implicit TLS). Upstream port 25 accepts bounce/DSN traffic only; relaying there raises a risk signal and gets your egress IP banned."
+        "Use 587 (STARTTLS). Upstream port 25 accepts bounce/DSN traffic only; relaying there raises a risk signal and gets your egress IP banned."
       ;;
     *)
-      die_hint "SMTP_PORT must be 587 or 465 (got '$SMTP_PORT')." \
-        "587 is STARTTLS submission, 465 is implicit TLS. No other port is accepted upstream."
+      die_hint "SMTP_PORT must be 587 (got '$SMTP_PORT')." \
+        "587 is STARTTLS submission. No other port is accepted upstream."
       ;;
   esac
 
@@ -107,11 +107,9 @@ validate_env() {
   validate_networks
 
   # --- limits ------------------------------------------------------------
+  # The range top equals the upstream submission listener's cap (25 MiB), so a value this
+  # range accepts is never rejected upstream for size alone.
   assert_int_range MESSAGE_SIZE_LIMIT "$MESSAGE_SIZE_LIMIT" 1024 26214400
-  if [ "$MESSAGE_SIZE_LIMIT" -gt 20971520 ]; then
-    log_warn "MESSAGE_SIZE_LIMIT is ${MESSAGE_SIZE_LIMIT}, above the 20971520-byte cap the upstream"
-    log_warn "submission listener enforces. Larger messages will be rejected there, not here."
-  fi
   assert_int_range RECIPIENT_LIMIT "$RECIPIENT_LIMIT" 1 1000
   assert_time MAX_QUEUE_LIFETIME "$MAX_QUEUE_LIFETIME"
   assert_time SHUTDOWN_DRAIN_TIMEOUT "${SHUTDOWN_DRAIN_TIMEOUT}"
@@ -276,7 +274,7 @@ validate_legacy_env() {
 
   if [ -n "${SMTP_SERVER:-}" ]; then
     log_warn "SMTP_SERVER is set and will be ignored. This image always relays to smtp.mailkube.com;"
-    log_warn "the host is hardcoded and has no override. Only SMTP_PORT (587 or 465) is selectable."
+    log_warn "the host is hardcoded and has no override. SMTP_PORT accepts only 587."
   fi
   if [ -n "${DEBUG:-}" ]; then
     log_warn "DEBUG is set and will be ignored. Use RELAY_DEBUG=yes for this container's diagnostics."
