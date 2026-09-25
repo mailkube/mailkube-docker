@@ -20,7 +20,7 @@
 #  Single stage: nothing is compiled, so a builder stage would only produce a
 #  second copy of the same apk closure.
 # =============================================================================
-FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 #  Build-time shell only (this does not affect ENTRYPOINT, which uses /bin/sh).
 #  pipefail matters for the assertion block below: without it, a `postconf` that
