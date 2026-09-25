@@ -63,13 +63,8 @@ apply_config() {
     "smtputf8_enable = ${SMTPUTF8_ENABLE}" \
     "inet_protocols = ${INET_PROTOCOLS}"
 
-  # Port 465 is implicit TLS: the connection is encrypted before the banner, so
-  # there is no STARTTLS handshake to upgrade.
-  if [ "$SMTP_PORT" = "465" ]; then
-    set -- "$@" "smtp_tls_wrappermode = yes"
-  else
-    set -- "$@" "smtp_tls_wrappermode = no"
-  fi
+  # Submission is STARTTLS on 587; wrapper mode (TLS from the first byte) is never used.
+  set -- "$@" "smtp_tls_wrappermode = no"
 
   # A non-zero rate delay implicitly collapses per-destination concurrency to 1,
   # so pacing and concurrency are not independently selectable. Postfix time

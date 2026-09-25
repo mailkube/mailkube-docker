@@ -39,7 +39,6 @@ OUT = Path(os.environ.get("SINK_OUT", "/out"))
 CERT = Path(os.environ.get("SINK_CERT", "/certs/leaf.pem"))
 KEY = Path(os.environ.get("SINK_KEY", "/certs/leaf.key"))
 PORT = int(os.environ.get("SINK_PORT", "587"))
-IMPLICIT_TLS = os.environ.get("SINK_IMPLICIT_TLS", "no") == "yes"
 
 REPLY_DATA = os.environ.get("SINK_REPLY_DATA", "")
 FAIL_FIRST = int(os.environ.get("SINK_FAIL_FIRST", "0"))
@@ -186,15 +185,12 @@ def main() -> None:
         # a regression that disables TLS on the relay fails loudly.
         "auth_require_tls": True,
     }
-    if IMPLICIT_TLS:
-        kwargs["ssl_context"] = ctx
-    else:
-        kwargs["tls_context"] = ctx
-        kwargs["require_starttls"] = True
+    kwargs["tls_context"] = ctx
+    kwargs["require_starttls"] = True
 
     controller = CountingController(Recorder(), **kwargs)
     controller.start()
-    print(f"sink listening on :{PORT} implicit_tls={IMPLICIT_TLS}", flush=True)
+    print(f"sink listening on :{PORT}", flush=True)
     try:
         asyncio.get_event_loop().run_forever()
     except KeyboardInterrupt:

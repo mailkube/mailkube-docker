@@ -120,9 +120,6 @@ harness invocation, including in any new fixture.
   preserved, so they hide the 0777 problem that Kubernetes emptyDir and most CSI provisioners create.
   T-23 mounts tmpfs at `mode=1777` specifically so CI reproduces the Kubernetes case. Do not replace it
   with a named volume.
-- **Both upstream ports.** 587 (STARTTLS, `SINK_IMPLICIT_TLS=no`) and 465 (implicit TLS,
-  `SINK_IMPLICIT_TLS=yes`, relay `smtp_tls_wrappermode = yes`) are separate paths and both must be
-  exercised.
 - **Header fidelity.** The five `X-Mailkube-*` headers must arrive byte-identical, including a long
   `X-Mailkube-Template-Variables` value near the 998-byte line limit.
 

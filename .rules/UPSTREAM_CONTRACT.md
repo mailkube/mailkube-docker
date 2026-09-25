@@ -28,12 +28,11 @@ The `[brackets]` are load-bearing twice:
 `sender_dependent_relayhost_maps` is pinned empty in `main.cf` because trivial-rewrite evaluates it
 **before** `relayhost`, so a `static:` value there needs no file on disk and would silently win.
 
-## 2. Only ports 587 and 465. Port 25 upstream is forbidden
+## 2. Only port 587. Port 25 upstream is forbidden
 
 | Port | Meaning | Relay behaviour |
 |---|---|---|
 | 587 | STARTTLS submission | default, `smtp_tls_wrappermode = no` |
-| 465 | implicit TLS submission | `smtp_tls_wrappermode = yes` |
 | 25 | **bounce / DSN intake only** | rejected at boot by `validate_env()` |
 
 Relaying to upstream port 25 fires **risk signal 100** and TCP-bans the source IP. `validate.sh` gives
@@ -134,7 +133,7 @@ authenticates once per message reaches 20 throttled AUTHs during any ordinary ba
 the whole justification for `smtp_tls_connection_reuse = yes`, `initial_destination_concurrency = 1`,
 `minimal_backoff_time = 120s` and `RELAY_START_JITTER`.
 
-**What a ban actually is:** a TCP-level reject on ports 587, 465 and 25, with **no SMTP banner**. The
+**What a ban actually is:** a TCP-level reject on ports 587 and 25, with **no SMTP banner**. The
 client sees a connection failure, not a 5xx, so there is no diagnostic reply to read and nothing in the
 mail log except connect failures.
 
