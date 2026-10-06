@@ -162,7 +162,7 @@ sequenceDiagram
   R->>M: QUIT
 ```
 
-Mailkube permits **2 authentications per second per domain**, and exceeding it is not free: each
+Mailkube permits **6 authentications per second per domain**, and exceeding it is not free: each
 rejection raises a risk signal, and enough of them ban your cluster's egress IP. The relay is tuned
 so that a full queue drain costs one authentication rather than one per message. Measured: 20
 messages sent 3 seconds apart cost **1** authentication. With reuse disabled the same workload costs
@@ -227,7 +227,7 @@ file created by `echo` embeds a newline, and that is the single most common caus
 | `RECIPIENT_LIMIT` | `50` | Recipients per delivery batch. |
 | `MAX_QUEUE_LIFETIME` | `1d` | How long to keep retrying. Set `1h` for OTP and password-reset traffic. |
 | `RELAY_CONCURRENCY` | `2` | Parallel connections upstream. Read the fleet rule below before raising. |
-| `RELAY_MSG_RATE` | | Your plan's messages/second. `1` or lower enables a 1s pacing delay. |
+| `RELAY_MSG_RATE` | | `1` paces one message per second, slower than every plan. `2` to `100` leave pacing off. |
 
 > **Fleet rule:** `instances × RELAY_CONCURRENCY ≤ 9`. Mailkube's edge rejects at 20 concurrent
 > connections **per source IP**, which is your cluster's shared egress NAT address, not per pod.
@@ -237,9 +237,9 @@ file created by `echo` embeds a newline, and that is the single most common caus
 > sidecar mode "instances" is your application pod count, so cap it at roughly 4 app pods per egress
 > address.
 
-`RELAY_MSG_RATE` is off by default because we cannot know your plan from inside the container, and
-Postfix's minimum pacing interval is one second, which would throttle higher tiers by 6x. Enabling
-any pacing collapses concurrency to 1; that is Postfix behaviour, not a choice this image makes.
+`RELAY_MSG_RATE` is off by default. Postfix's minimum pacing interval is one second, which is slower
+than every plan's send rate, by 4x on Free and 10x on the top plans. Enabling any pacing collapses
+concurrency to 1; that is Postfix behaviour, not a choice this image makes.
 
 ### Inbound authentication (optional)
 
@@ -375,11 +375,11 @@ the `oc adm policy` command.
 
 | Mailkube limit | Value | What the relay does | If you exceed it |
 |---|---|---|---|
-| Authentications | 2/sec per domain | Reuses one authenticated connection for up to 90 messages | `454 4.7.0`, plus a risk signal |
+| Authentications | 6/sec per domain | Reuses one authenticated connection for up to 90 messages | `454 4.7.0`, plus a risk signal |
 | Concurrent connections | 20 per source IP | `RELAY_CONCURRENCY=2`, ramping from 1 on cold start, costing 4 slots at steady state | TCP reject, no SMTP reply |
-| Messages | 1 to 6/sec by plan | Queues and retries; optional `RELAY_MSG_RATE` pacing | `450 4.7.1`, plus a risk signal |
+| Messages | 4 to 10/sec by plan | Queues and retries; optional `RELAY_MSG_RATE` pacing | `450 4.7.1`, plus a risk signal |
 | Message size | 10/15/25 MB by plan, 25 MiB at the edge | Rejects locally at `MESSAGE_SIZE_LIMIT` | `552` locally, or `5.3.4` upstream |
-| Recipients | 1 to 50 by plan | Splits into batches of `RECIPIENT_LIMIT` | `5.5.3` |
+| Recipients | 4 to 50 by plan | Splits into batches of `RECIPIENT_LIMIT` | `5.5.3` |
 | Submission port | 587 | Refuses any other value | n/a |
 
 > **Rate rejections are not free.** Every `450` and `454` raises a risk signal against the
@@ -439,7 +439,7 @@ For Prometheus, run a `postfix_exporter` sidecar against the shared spool volume
 | `4.7.0` | Authentication throttled | Transient. Persistent means connection reuse is broken |
 | `4.7.1` | Message rate exceeded | Transient. Consider `RELAY_MSG_RATE` |
 | `5.3.4` | Message too large | Check your plan's limit |
-| `5.5.3` | Too many recipients | Lower `RECIPIENT_LIMIT` |
+| `5.5.3` | Too many recipients | Send fewer To, Cc and Bcc addresses per message; your plan sets the cap |
 | `5.6.0` | Invalid content, tags, or template | Check the `X-Mailkube-*` headers |
 | `5.7.0` | Quota exceeded | Check your plan usage |
 

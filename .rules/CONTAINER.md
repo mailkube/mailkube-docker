@@ -93,7 +93,7 @@ After the copy, against **our** `master.cf` rather than the stock one:
 
 5. `postconf -M tlsproxy/unix`: the load-bearing entry. Without `tlsproxy`,
    `smtp_tls_connection_reuse` silently does nothing and every message pays a fresh AUTH against a
-   2/sec per-domain budget. Stock Alpine ships this line commented out, so a careless merge from
+   6/sec per-domain budget. Stock Alpine ships this line commented out, so a careless merge from
    upstream reintroduces the failure with no other symptom.
 6. `postconf -M scache/unix`: the shared connection cache that holds the reused authenticated sessions.
 7. `postconf -M discard/unix`: the target of the null-sender transport map that suppresses DSNs when

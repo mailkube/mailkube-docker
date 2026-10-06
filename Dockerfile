@@ -76,7 +76,7 @@ COPY rootfs/ /
 #  Asserted AFTER the config is copied, because these check our master.cf rather
 #  than the stock one. tlsproxy is the load-bearing entry: without it,
 #  smtp_tls_connection_reuse silently does nothing and every message pays a fresh
-#  AUTH against a 2/sec per-domain budget.
+#  AUTH against a 6/sec per-domain budget.
 RUN set -eux; \
     postconf -M tlsproxy/unix >/dev/null || { echo "FATAL: tlsproxy service missing (required by smtp_tls_connection_reuse)"; exit 1; }; \
     postconf -M scache/unix   >/dev/null || { echo "FATAL: scache service missing (connection cache)"; exit 1; }; \

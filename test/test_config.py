@@ -144,7 +144,7 @@ def test_relay_msg_rate_enables_pacing_only_at_one_per_second(factory):
     """Pacing is opt-in, and any non-zero delay collapses concurrency to 1 in Postfix.
 
     Postfix time values are integral, so 1s is the smallest usable delay. That is
-    why a blanket default would throttle higher plan tiers by 6x.
+    why a blanket default would throttle every plan tier, by 4x to 10x.
     """
     factory.sink()
     slow = factory.relay(RELAY_MSG_RATE="1")

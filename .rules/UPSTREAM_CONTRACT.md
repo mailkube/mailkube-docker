@@ -128,7 +128,7 @@ RiskSignal**, and RiskSignals accumulate into a TCP ban.
 | `IP_AUTH_RATE_LIMITED` (auth throttle, 454) | 15 min | 20 signals | 60 / 360 / 1440 min |
 
 Note how much cheaper it is to trip the AUTH rule: 20 signals in 15 minutes for a **one hour** first
-ban, escalating to a full day. The per-domain budget upstream is 2 AUTH/sec, so an image that
+ban, escalating to a full day. The per-domain budget upstream is 6 AUTH/sec, so an image that
 authenticates once per message reaches 20 throttled AUTHs during any ordinary backlog drain. That is
 the whole justification for `smtp_tls_connection_reuse = yes`, `initial_destination_concurrency = 1`,
 `minimal_backoff_time = 120s` and `RELAY_START_JITTER`.

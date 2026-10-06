@@ -109,7 +109,7 @@ smtp_sasl_auth_soft_bounce = yes
 #  would stop this pod attempting AUTH at all while it still reports healthy.
 
 # -----------------------------------------------------------------------------
-#  Connection reuse -- how the 2 AUTH/sec-per-domain budget is respected
+#  Connection reuse -- how the 6 AUTH/sec-per-domain budget is respected
 # -----------------------------------------------------------------------------
 #  Without reuse, every message costs a fresh TCP + TLS handshake + AUTH.
 #
@@ -141,9 +141,10 @@ connection_cache_ttl_limit = 45s
 #  Bounds a reused channel so DNS is re-resolved and TLS sessions rotate.
 smtp_connection_reuse_time_limit = 300s
 
-#  Upstream max_messages_per_connection is 100. Closing at 90 means Postfix ends
-#  the session at a clean boundary instead of being cut off mid-transaction, with
-#  headroom for any disagreement about what counts as a message.
+#  Upstream max_messages_per_connection is 5,000 and counts RCPT TO, not messages.
+#  90 deliveries x RECIPIENT_LIMIT (50) = 4,500 recipients stays under it, so
+#  Postfix ends the session at a clean boundary instead of being cut off with a
+#  421 4.5.3 mid-transaction.
 smtp_connection_reuse_count_limit = 90
 
 # -----------------------------------------------------------------------------
@@ -170,9 +171,9 @@ smtp_connection_reuse_count_limit = 90
 smtp_destination_concurrency_limit = 2
 
 #  Postfix's default is 5. On a cold start that means 5 sockets and 5 AUTHs in
-#  the first second, against a 2/sec budget: an instant 454, and every 454 emits
-#  a RiskSignal. This one line is the difference between a clean cold start and
-#  a self-inflicted ban.
+#  the first second. One replica now fits the 6/sec budget, but replicas that
+#  restart together share it per domain, and every 454 emits a RiskSignal. This
+#  one line keeps a synchronized cold start from becoming a self-inflicted ban.
 initial_destination_concurrency = 1
 
 #  Postfix's default is 1: a single connect or handshake blip marks the
@@ -184,7 +185,7 @@ smtp_destination_concurrency_failed_cohort_limit = 10
 #  Timeouts
 # -----------------------------------------------------------------------------
 smtp_connect_timeout    = 20s
-#  A slow QUIT would otherwise hold a HAProxy connection slot for 5 minutes.
+#  A slow QUIT would otherwise hold a HAProxy connection slot for 6 minutes.
 smtp_quit_timeout       = 10s
 smtp_data_xfer_timeout  = 300s
 #  MUST stay above the upstream data_processing_timeout of 5m. Do not "optimize"

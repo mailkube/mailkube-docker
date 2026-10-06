@@ -88,7 +88,7 @@ answered first.
 
 ## The AUTH arithmetic
 
-The upstream per-domain budget is **2 AUTH/sec**. Everything below is arranged so a normal workload
+The upstream per-domain budget is **6 AUTH/sec**. Everything below is arranged so a normal workload
 performs approximately one AUTH per *burst*, not one per message.
 
 ```
@@ -113,11 +113,11 @@ The four reuse bounds and why each has the value it has:
 | `smtp_connection_cache_time_limit` | `45s` | upstream `client_timeout` is 1m, so we always close first and never burn a delivery attempt on a server-closed socket. Deliberately **not** equal to `queue_run_delay`, or every deferred retry would arrive exactly as the cached connection expired |
 | `connection_cache_ttl_limit` | `45s` | must match the line above, see trap 2 |
 | `smtp_connection_reuse_time_limit` | `300s` | bounds a reused channel so DNS is re-resolved and TLS sessions rotate |
-| `smtp_connection_reuse_count_limit` | `90` | upstream `max_messages_per_connection` is 100; closing at 90 ends the session at a clean boundary with headroom for any disagreement about what counts as a message |
+| `smtp_connection_reuse_count_limit` | `90` | upstream `max_messages_per_connection` is 5,000 and counts RCPT TO, not messages; 90 deliveries × `RECIPIENT_LIMIT` 50 = 4,500 recipients ends the session at a clean boundary instead of a `421 4.5.3` |
 
 Cold start matters as much as steady state. `initial_destination_concurrency` defaults to **5**, which
-on a cold start means 5 sockets and 5 AUTHs in the first second against a 2/sec budget: an immediate
-454, and every 454 is a RiskSignal. It is pinned to `1`. `RELAY_START_JITTER` (default 15s, set to 0 in
+on a cold start means 5 sockets and 5 AUTHs in the first second. One replica now fits the 6/sec budget,
+but replicas that restart together share it per domain, and every 454 is a RiskSignal. It is pinned to `1`. `RELAY_START_JITTER` (default 15s, set to 0 in
 tests) decorrelates synchronized multi-replica restarts for the same reason.
 
 ## The fleet connection budget
