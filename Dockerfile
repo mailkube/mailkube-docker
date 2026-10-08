@@ -81,6 +81,10 @@ RUN set -eux; \
     postconf -M tlsproxy/unix >/dev/null || { echo "FATAL: tlsproxy service missing (required by smtp_tls_connection_reuse)"; exit 1; }; \
     postconf -M scache/unix   >/dev/null || { echo "FATAL: scache service missing (connection cache)"; exit 1; }; \
     postconf -M discard/unix  >/dev/null || { echo "FATAL: discard transport missing (DSN suppression)"; exit 1; }; \
+    postconf -m | grep -qx randmap || { echo "FATAL: randmap support missing (spreads messages across the delivery lanes)"; exit 1; }; \
+    for i in 1 2 3 4 5 6 7 8 9 10; do \
+      postconf -M "mklane${i}/unix" >/dev/null || { echo "FATAL: mklane${i} service missing (RELAY_LANES up to 10)"; exit 1; }; \
+    done; \
     chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/healthcheck.sh; \
     postfix -c /etc/postfix check
 

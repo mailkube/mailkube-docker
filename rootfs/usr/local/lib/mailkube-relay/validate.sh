@@ -124,20 +124,34 @@ validate_env() {
   # sender behind the same address, so that value is rejected rather than warned.
   assert_int_range RELAY_CONCURRENCY "$RELAY_CONCURRENCY" 1 9
   # Warn above 2 (the default), which is 4 of the 20 admitted slots. The previous
-  # threshold of 4 predates the x2 and stayed silent at 8 slots.
-  if [ "$RELAY_CONCURRENCY" -gt 2 ]; then
+  # threshold of 4 predates the x2 and stayed silent at 8 slots. Only reachable when
+  # pacing is off: a lane's rate delay pins its concurrency to 1, so with lanes on this
+  # value governs nothing and RELAY_LANES is the knob that matters.
+  if [ "$RELAY_LANES" -eq 0 ] && [ "$RELAY_CONCURRENCY" -gt 2 ]; then
     log_warn "RELAY_CONCURRENCY=${RELAY_CONCURRENCY}. The upstream admits 20 concurrent connections"
     log_warn "per source IP, shared by every replica behind your cluster's egress address."
     log_warn "Each unit of concurrency holds TWO connections: one delivering, one cached idle for reuse."
     log_warn "Keep (instances x RELAY_CONCURRENCY) at or below 9."
   fi
 
-  if [ -n "$RELAY_MSG_RATE" ]; then
-    assert_int_range RELAY_MSG_RATE "$RELAY_MSG_RATE" 1 100
-    if [ "$RELAY_MSG_RATE" -le 1 ]; then
-      log_warn "RELAY_MSG_RATE=${RELAY_MSG_RATE} enables a 1s per-message rate delay."
-      log_warn "A non-zero rate delay collapses per-destination concurrency to 1 in Postfix."
-    fi
+  #  Ten is the ceiling because each lane holds TWO of the 20 connections the upstream
+  #  admits per source IP, so ten lanes consume the entire budget on their own. It also
+  #  matches the highest plan rate, so no plan needs more.
+  assert_int_range RELAY_LANES "$RELAY_LANES" 0 10
+  if [ "$RELAY_LANES" -eq 0 ]; then
+    log_warn "RELAY_LANES=0 disables pacing. The relay will send as fast as the network allows,"
+    log_warn "and upstream answers 450 with a risk signal for every message over your plan's rate."
+  elif [ "$RELAY_LANES" -gt 9 ]; then
+    #  2 x 10 = 20, the whole budget, leaving nothing for a second instance or for
+    #  anything else sending from behind the same egress address.
+    log_warn "RELAY_LANES=${RELAY_LANES} holds $((RELAY_LANES * 2)) of the 20 connections the upstream admits"
+    log_warn "per source IP, which is the entire budget. Nothing else behind your egress address can connect."
+  fi
+  #  Compared against the default rather than a was-it-set flag: setting it to 2
+  #  explicitly changes nothing, so staying silent there costs the operator nothing.
+  if [ "$RELAY_LANES" -gt 0 ] && [ "$RELAY_CONCURRENCY" -ne 2 ]; then
+    log_warn "RELAY_CONCURRENCY=${RELAY_CONCURRENCY} is ignored while RELAY_LANES=${RELAY_LANES}."
+    log_warn "Each lane's rate delay pins its concurrency to 1. Set RELAY_LANES=0 to use RELAY_CONCURRENCY."
   fi
 
   # --- behaviour ---------------------------------------------------------
@@ -271,6 +285,10 @@ validate_legacy_env() {
   _fail_if_set LOG_SUBJECT "Removed. Logging subject lines puts personal data in your log aggregator; use the Mailkube sending log instead."
   _fail_if_set DESTINATION "Removed. This is a null client and never delivers locally."
   _fail_if_set ALWAYS_ADD_MISSING_HEADERS "Removed. Missing headers are always added."
+  #  Fails rather than warns: the name said messages per second while only the value 1
+  #  did anything, and 2 to 100 silently applied no pacing at all. Carrying the old name
+  #  forward would keep that lie. RELAY_LANES=N is the same number, honoured.
+  _fail_if_set RELAY_MSG_RATE "Renamed to RELAY_LANES, which now means what the old name claimed: RELAY_LANES=4 paces at up to 4 messages/second. RELAY_MSG_RATE only ever paced at 1, and any value above 1 silently paced not at all."
 
   if [ -n "${SMTP_SERVER:-}" ]; then
     log_warn "SMTP_SERVER is set and will be ignored. This image always relays to smtp.mailkube.com;"

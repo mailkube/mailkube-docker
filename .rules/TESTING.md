@@ -17,7 +17,8 @@ functions, because every interesting behaviour of this image is an interaction w
 |---|---|
 | `connections`, `auths` | the connection-reuse assertion (T-14b). A correct relay carries many messages over one authenticated connection |
 | `auth_times` | AUTHs **per second**, which is what the upstream limit actually constrains, not just the total |
-| `peak_concurrent` | the per-source-IP connection ceiling is respected. Counts **sockets, not deliveries**: with connection reuse a relay holds up to `2 × RELAY_CONCURRENCY` of them, because a finished delivery's socket stays open and cached. T-15 asserts that factor, and the fleet rule depends on it |
+| `peak_concurrent` | the per-source-IP connection ceiling is respected. Counts **sockets, not deliveries**: with connection reuse a relay holds up to `2 × RELAY_LANES` of them with pacing on, or `2 × RELAY_CONCURRENCY` with it off, because a finished delivery's socket stays open and cached. T-15 asserts that factor, and the fleet rule depends on it |
+| `at`, per message | the delivery **timestamp**, which is how the lane tests measure achieved messages per second. A paced lane cannot be proved by reading `postconf`: the config says `1s` whether or not the lanes run independently |
 | `messages`, `data_commands` | delivery vs. attempts, so a 450 retry is visible |
 | `auth_failures` | AUTH rejection paths |
 

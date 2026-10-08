@@ -74,7 +74,10 @@ load_env() {
   RECIPIENT_LIMIT="${RECIPIENT_LIMIT:-50}"
   MAX_QUEUE_LIFETIME="${MAX_QUEUE_LIFETIME:-1d}"
   RELAY_CONCURRENCY="${RELAY_CONCURRENCY:-2}"
-  RELAY_MSG_RATE="${RELAY_MSG_RATE:-}"
+  #  Paced delivery lanes, one message per second each, so the default paces at the
+  #  Free plan's 4/sec. Raise it to the plan's rate; 0 turns pacing off entirely and
+  #  hands delivery back to the single `smtp` transport and RELAY_CONCURRENCY.
+  RELAY_LANES="${RELAY_LANES:-4}"
 
   # --- inbound authentication (optional) ---------------------------------
   # Off unless RELAY_AUTH_USERS or RELAY_AUTH_USERS_FILE is set. When on, the

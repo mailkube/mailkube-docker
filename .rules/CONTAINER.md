@@ -77,10 +77,10 @@ package name, so it stays correct if Alpine ever splits the package.
 
 Adding a package needs a stated reason in the PR. Every one is pulled on every pod start.
 
-## The 7 build assertions
+## The 9 build assertions
 
 They turn otherwise-untestable assumptions into **build** failures rather than production failures.
-Four run before `COPY rootfs/ /` (they test the distribution), three after (they test our config).
+Four run before `COPY rootfs/ /` (they test the distribution), five after (they test our config).
 
 Before the copy, against Alpine's package layout and Postfix's compiled-in map types:
 
@@ -100,6 +100,12 @@ After the copy, against **our** `master.cf` rather than the stock one:
 6. `postconf -M scache/unix`: the shared connection cache that holds the reused authenticated sessions.
 7. `postconf -M discard/unix`: the target of the null-sender transport map that suppresses DSNs when
    `BOUNCE_RECIPIENT` is unset. Without it, a DSN would be relayed upstream, rejected 550 and loop.
+8. `postconf -m | grep -qx randmap`: spreads messages across the delivery lanes. It is the only
+   distribution primitive Postfix has, so without it `RELAY_LANES` cannot work at all.
+9. `postconf -M mklane{1..10}/unix`: the ten paced delivery lanes. They are shipped **statically** in
+   `master.cf` rather than generated at runtime, precisely so they can be asserted here; a lane
+   `RELAY_LANES` does not arm is never routed to and never spawned. Ten is the ceiling because each
+   lane holds two of the 20 connections the upstream admits per source IP.
 
 The same `RUN` also `chmod +x` the two entrypoint scripts and runs `postfix -c /etc/postfix check`.
 

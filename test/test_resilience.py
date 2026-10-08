@@ -46,8 +46,12 @@ def test_t17_bounce_recipient_switches_off_suppression(factory):
     factory.sink()
     relay = factory.relay(BOUNCE_RECIPIENT=f"ops@{AUTH_DOMAIN}")
 
-    assert relay.postconf_one("sender_dependent_default_transport_maps") == "", (
-        "the discard map must be off, or the DSN this mode exists to deliver is discarded"
+    #  Asserts the absence of the DISCARD map rather than an empty parameter: the lane
+    #  randmap shares this value, and in tier 3 it is what carries the DSN upstream to
+    #  BOUNCE_RECIPIENT instead of dropping it.
+    maps = relay.postconf_one("sender_dependent_default_transport_maps")
+    assert "sender_transport" not in maps, (
+        f"the discard map must be off, or the DSN this mode exists to deliver is discarded: {maps}"
     )
     assert relay.postconf_one("bounce_notice_recipient") == f"ops@{AUTH_DOMAIN}"
     assert "bounce" in relay.postconf_one("notify_classes")

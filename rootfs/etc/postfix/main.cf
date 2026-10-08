@@ -150,6 +150,10 @@ smtp_connection_reuse_count_limit = 90
 # -----------------------------------------------------------------------------
 #  Concurrency -- how the 20-connections-per-source-IP ceiling is respected
 # -----------------------------------------------------------------------------
+#  NOTE: this parameter governs the single unpaced `smtp` transport, which carries
+#  mail only when RELAY_LANES=0. With lanes on (the default), mail travels over the
+#  mklane* transports instead, each pinned to concurrency 1 by its rate delay, and
+#  the fleet arithmetic is 2 x lanes x instances. See .rules/POSTFIX_TUNING.md.
 #  HAProxy ADMITS 20 concurrent connections PER SOURCE IP, which is per cluster
 #  egress NAT, shared by every replica and anything else sending from behind it.
 #  Its rule is `src_conn_cur ge MAX_CONN_PER_IP` against a counter that already
@@ -180,7 +184,12 @@ initial_destination_concurrency = 1
 #  Postfix's default is 1: a single connect or handshake blip marks the
 #  destination dead and defers the ENTIRE queue. With exactly one destination
 #  that is a total outage triggered by one bad packet.
-smtp_destination_concurrency_failed_cohort_limit = 10
+#
+#  Set on `default_` rather than `smtp_` so EVERY transport inherits it, the
+#  mklane* delivery lanes included. A lane is its own transport, so an
+#  `smtp_`-prefixed value would not reach it and each lane would silently fall
+#  back to Postfix's 1.
+default_destination_concurrency_failed_cohort_limit = 10
 
 # -----------------------------------------------------------------------------
 #  Timeouts
@@ -224,8 +233,10 @@ message_size_limit = 26214400
 mailbox_size_limit = 0
 
 #  Matches the paid-plan recipient ceiling and makes Postfix's batch split
-#  boundary predictable.
-smtp_destination_recipient_limit = 50
+#  boundary predictable. On `default_` so the mklane* lanes inherit it: each lane
+#  is its own transport, and Postfix's own default is also 50, so an
+#  `smtp_`-prefixed value would appear to work until RECIPIENT_LIMIT was lowered.
+default_destination_recipient_limit = 50
 
 #  The Postfix default, pinned and commented so nobody "fixes" it. This is what
 #  breaks long header lines by inserting CRLF+SPACE at a fixed byte offset with

@@ -64,6 +64,37 @@ virtual    unix  -       n       n       -       -       virtual
 lmtp       unix  -       -       n       -       -       lmtp
 anvil      unix  -       -       n       -       1       anvil
 
+# Paced delivery lanes.
+#
+# Postfix's only pacing knob, smtp_destination_rate_delay, takes an INTEGRAL time
+# value, so one stream can never exceed one message per second. The delay is scoped
+# per transport-and-destination, so N transports to the same relayhost are N
+# independent paced streams. The entrypoint activates RELAY_LANES of the ten below,
+# gives each a 1s delay, and spreads messages across them with a randmap, which is
+# the only distribution primitive Postfix has.
+#
+# Measured 2026-10-08: 12 messages over 4 lanes delivered in 3.2s (3.75/s) against
+# the 11s one paced stream needs. See test_relay.py, the lane tests.
+#
+# Ten, because each lane holds two of the 20 connections the upstream admits per
+# source IP: one delivering, one cached idle for reuse. A lane that RELAY_LANES does
+# not activate is never named in the transport map and is therefore never spawned,
+# the same reason the unused local/virtual/lmtp services above cost nothing.
+#
+# These are plain smtp(8) instances, so they inherit every smtp_* parameter,
+# including the TLS policy, the SASL credential and connection reuse. Only the
+# per-destination parameters need the `default_` prefix in main.cf to reach them.
+mklane1    unix  -       -       n       -       -       smtp
+mklane2    unix  -       -       n       -       -       smtp
+mklane3    unix  -       -       n       -       -       smtp
+mklane4    unix  -       -       n       -       -       smtp
+mklane5    unix  -       -       n       -       -       smtp
+mklane6    unix  -       -       n       -       -       smtp
+mklane7    unix  -       -       n       -       -       smtp
+mklane8    unix  -       -       n       -       -       smtp
+mklane9    unix  -       -       n       -       -       smtp
+mklane10   unix  -       -       n       -       -       smtp
+
 # Shared connection cache. Holds the reused, authenticated TLS sessions.
 scache     unix  -       -       n       -       1       scache
 

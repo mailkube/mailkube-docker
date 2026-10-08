@@ -136,6 +136,11 @@ authenticates once per message reaches 20 throttled AUTHs during any ordinary ba
 the whole justification for `smtp_tls_connection_reuse = yes`, `initial_destination_concurrency = 1`,
 `minimal_backoff_time = 120s` and `RELAY_START_JITTER`.
 
+`RELAY_LANES` spends against this same budget: each paced lane holds its own authenticated connection,
+so the cost is one AUTH per burst **per lane**. The default of 4 clears 6/sec for a single instance;
+two instances at 8 or 10 lanes starting together do not, which is what the startup jitter spreads.
+See the fleet budget in `.rules/POSTFIX_TUNING.md`.
+
 **What a ban actually is:** a TCP-level reject on ports 587 and 25, with **no SMTP banner**. The
 client sees a connection failure, not a 5xx, so there is no diagnostic reply to read and nothing in the
 mail log except connect failures.

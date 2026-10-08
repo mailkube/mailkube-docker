@@ -13,16 +13,20 @@
 #  -------------------------------------------------------------------------
 #  FLEET CONNECTION BUDGET, read before changing `replicas`:
 #
-#      instances x RELAY_CONCURRENCY <= 9
+#      2 x RELAY_LANES x instances <= 18
+#      (instances x RELAY_CONCURRENCY <= 9 when RELAY_LANES=0)
 #
-#  The upstream edge rejects at 20 concurrent connections PER SOURCE IP, and
-#  that source IP is your cluster's shared egress NAT address, not the pod IP.
+#  The upstream edge admits 20 concurrent connections PER SOURCE IP, and that
+#  source IP is your cluster's shared egress NAT address, not the pod IP.
 #  Every replica, plus anything else sending from behind the same NAT, spends
-#  from the same 20. Each unit of concurrency holds TWO connections, one
-#  delivering and one cached idle for reuse, so the budget is halved. With the
-#  default RELAY_CONCURRENCY=2 the ceiling is 4 replicas. Two replicas, as
-#  configured below, is the right starting point for almost everyone:
-#  throughput here is round-trip bound, not connection bound.
+#  from the same 20. Each paced lane holds TWO connections, one delivering and
+#  one cached idle for reuse, so the budget is halved. With the default
+#  RELAY_LANES=4 the ceiling is 2 replicas, which is also the right starting
+#  point for almost everyone.
+#
+#  Lanes are also your send rate: each one carries up to one message per second,
+#  so RELAY_LANES is messages per second. Raising it to your plan's rate costs
+#  replicas from the budget above, so raise lanes before adding replicas.
 #
 #  DO NOT put a HorizontalPodAutoscaler on this workload. An HPA reacts to a
 #  queue backlog by adding replicas, which spends more connections against a
@@ -167,9 +171,13 @@ spec:
                   name: mailkube-smtp-credential
                   key: password
 
-            # See the fleet connection budget at the top of this file.
-            - name: RELAY_CONCURRENCY
-              value: "2"
+            # Paced delivery lanes, one message per second each, so this is
+            # also your send rate. 4 matches the Free plan; raise it to your
+            # plan's rate (Launch/Momentum 6, Elite/Ultimate 8, Scale and above
+            # 10). See the fleet connection budget at the top of this file:
+            # each lane costs two upstream connections.
+            - name: RELAY_LANES
+              value: "4"
 
             # Decorrelates synchronized cold starts. Without it, all replicas
             # restarting together open their first connections in the same

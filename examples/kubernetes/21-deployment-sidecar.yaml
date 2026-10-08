@@ -28,18 +28,20 @@
 #  -------------------------------------------------------------------------
 #  FLEET CONNECTION BUDGET, read before setting `replicas`:
 #
-#      instances x RELAY_CONCURRENCY <= 9
+#      2 x RELAY_LANES x instances <= 18
+#      (instances x RELAY_CONCURRENCY <= 9 when RELAY_LANES=0)
 #
-#  The upstream edge rejects at 20 concurrent connections PER SOURCE IP, and
-#  that source IP is your cluster's shared egress NAT address. In sidecar mode
+#  The upstream edge admits 20 concurrent connections PER SOURCE IP, and that
+#  source IP is your cluster's shared egress NAT address. In sidecar mode
 #  "instances" is YOUR APPLICATION'S POD COUNT, because every app pod carries a
 #  relay. The relay cannot see or validate this; it is your budget to keep.
 #
-#  With the default RELAY_CONCURRENCY=2 that is about 9 application pods per
-#  egress IP. Note that `maxSurge: 1` below adds one more pod during a rollout,
-#  so 8 replicas is the safe steady-state ceiling. Beyond that, switch to
-#  cluster-service mode, where the number of relays is decoupled from the number
-#  of application pods.
+#  With the default RELAY_LANES=4 that is only 2 application pods per egress IP,
+#  and `maxSurge: 1` below adds one more during a rollout. Sidecar mode and
+#  paced lanes pull against each other for that reason: every pod pays the full
+#  lane cost. Above two app pods, either set RELAY_LANES=1 here and accept 1
+#  message/second per pod, or switch to cluster-service mode, where the number
+#  of relays is decoupled from the number of application pods.
 #
 #  Watch out for an existing HorizontalPodAutoscaler on the application: in
 #  sidecar mode it silently scales the relay fleet too, and can walk your
@@ -143,10 +145,12 @@ spec:
                   name: mailkube-smtp-credential
                   key: password
 
-            # See the fleet connection budget at the top of this file. This
-            # value is multiplied by your application's pod count.
-            - name: RELAY_CONCURRENCY
-              value: "2"
+            # Paced delivery lanes, one message per second each. Read the
+            # fleet connection budget at the top of this file FIRST: in sidecar
+            # mode this cost is multiplied by your application's pod count, so
+            # 1 is often the only value that fits.
+            - name: RELAY_LANES
+              value: "1"
 
             # Decorrelates synchronized cold starts across replicas.
             - name: RELAY_START_JITTER

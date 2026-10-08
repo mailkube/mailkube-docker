@@ -56,7 +56,7 @@ apply_config() {
     "myorigin = \$mydomain" \
     "mynetworks = ${MYNETWORKS}" \
     "message_size_limit = ${MESSAGE_SIZE_LIMIT}" \
-    "smtp_destination_recipient_limit = ${RECIPIENT_LIMIT}" \
+    "default_destination_recipient_limit = ${RECIPIENT_LIMIT}" \
     "smtp_destination_concurrency_limit = ${RELAY_CONCURRENCY}" \
     "maximal_queue_lifetime = ${MAX_QUEUE_LIFETIME}" \
     "bounce_queue_lifetime = 1h" \
@@ -66,14 +66,10 @@ apply_config() {
   # Submission is STARTTLS on 587; wrapper mode (TLS from the first byte) is never used.
   set -- "$@" "smtp_tls_wrappermode = no"
 
-  # A non-zero rate delay implicitly collapses per-destination concurrency to 1,
-  # so pacing and concurrency are not independently selectable. Postfix time
-  # values are integral, making 1s the smallest usable delay.
-  if [ -n "$RELAY_MSG_RATE" ] && [ "$RELAY_MSG_RATE" -le 1 ]; then
-    set -- "$@" "smtp_destination_rate_delay = 1s"
-  else
-    set -- "$@" "smtp_destination_rate_delay = 0s"
-  fi
+  # Pacing lives on the mklane* transports, never on the plain `smtp` one, which
+  # carries mail only when RELAY_LANES=0 and must stay unpaced so RELAY_CONCURRENCY
+  # means something there.
+  set -- "$@" "smtp_destination_rate_delay = 0s"
 
   if [ "$RELAY_DEBUG" = "yes" ]; then
     set -- "$@" "smtp_tls_loglevel = 2"
@@ -137,7 +133,6 @@ apply_config() {
     # Tier 3: deliver delivery-status notifications to a local operator
     # address at the authenticated domain.
     set -- "$@" \
-      "sender_dependent_default_transport_maps =" \
       "notify_classes = bounce, 2bounce" \
       "bounce_notice_recipient = ${BOUNCE_RECIPIENT}" \
       "2bounce_notice_recipient = ${BOUNCE_RECIPIENT}"
@@ -149,11 +144,41 @@ apply_config() {
     #
     # Logs remain the primary failure channel either way. Postfix already
     # emits a greppable line per failure and per expiry.
-    set -- "$@" \
-      "sender_dependent_default_transport_maps = pcre:${MAIL_CONFIG}/sender_transport" \
-      "notify_classes ="
+    set -- "$@" "notify_classes ="
   fi
 
+  _apply_transport_maps "$@"
+}
+
+# The bounce posture and the delivery lanes SHARE
+# sender_dependent_default_transport_maps, so its value is composed in one place.
+#
+# Order is load-bearing. Postfix searches the maps left to right and takes the first
+# match. The pcre map matches ONLY the null sender, so a DSN is routed to discard:
+# before the randmap, which matches every lookup, can route it onto a lane and relay it
+# upstream. Putting the randmap first would silently defeat DSN suppression.
+#
+# NOTE: this is NOT sender_dependent_relayhost_maps, which main.cf pins empty because it
+# can redirect mail off the relay host. This one only selects a local transport.
+_apply_transport_maps() {
+  _maps=""
+  [ -n "$BOUNCE_RECIPIENT" ] || _maps="pcre:${MAIL_CONFIG}/sender_transport"
+
+  if [ "$RELAY_LANES" -gt 0 ]; then
+    _lanes=""
+    _i=1
+    while [ "$_i" -le "$RELAY_LANES" ]; do
+      set -- "$@" "mklane${_i}_destination_rate_delay = 1s"
+      _lanes="${_lanes}${_lanes:+,}mklane${_i}:"
+      _i=$((_i + 1))
+    done
+    _maps="${_maps}${_maps:+ }randmap:{${_lanes}}"
+    log_info "pacing: ${RELAY_LANES} lane(s) at up to 1 message/second each, $((RELAY_LANES * 2)) upstream sockets"
+  else
+    log_info "pacing: off, RELAY_CONCURRENCY=${RELAY_CONCURRENCY}"
+  fi
+
+  set -- "$@" "sender_dependent_default_transport_maps = ${_maps}"
   postconf -c "$MAIL_CONFIG" -e "$@"
   _apply_listen_port
 }
