@@ -203,7 +203,7 @@ SOCKETS_PER_CONCURRENCY_SLOT = 2
 @pytest.mark.slow
 @pytest.mark.parametrize("concurrency", [1, 2, 4])
 def test_t15_peak_sockets_stay_within_the_fleet_budget(factory, concurrency):
-    """The upstream rejects at 20 concurrent connections per SOURCE IP.
+    """The upstream admits 20 concurrent connections per SOURCE IP.
 
     Sends in parallel on purpose. Sequential submission drains the queue as fast as it
     fills, so the concurrency limit is never actually reached and the observed peak

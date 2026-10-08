@@ -229,7 +229,7 @@ file created by `echo` embeds a newline, and that is the single most common caus
 | `RELAY_CONCURRENCY` | `2` | Parallel connections upstream. Read the fleet rule below before raising. |
 | `RELAY_MSG_RATE` | | `1` paces one message per second, slower than every plan. `2` to `100` leave pacing off. |
 
-> **Fleet rule:** `instances × RELAY_CONCURRENCY ≤ 9`. Mailkube's edge rejects at 20 concurrent
+> **Fleet rule:** `instances × RELAY_CONCURRENCY ≤ 9`. Mailkube's edge admits 20 concurrent
 > connections **per source IP**, which is your cluster's shared egress NAT address, not per pod.
 > Each concurrency slot costs **two** connection slots upstream, not one: connection reuse keeps a
 > finished connection open and idle for up to 45 seconds so the next message can reuse it, and an
@@ -379,12 +379,12 @@ the `oc adm policy` command.
 | Concurrent connections | 20 per source IP | `RELAY_CONCURRENCY=2`, ramping from 1 on cold start, costing 4 slots at steady state | TCP reject, no SMTP reply |
 | Messages | 4 to 10/sec by plan | Queues and retries; optional `RELAY_MSG_RATE` pacing | `450 4.7.1`, plus a risk signal |
 | Message size | 10/15/25 MB by plan, 25 MiB at the edge | Rejects locally at `MESSAGE_SIZE_LIMIT` | `552` locally, or `5.3.4` upstream |
-| Recipients | 4 to 50 by plan | Splits into batches of `RECIPIENT_LIMIT` | `5.5.3` |
+| Recipients | 4 to 50 by plan | Splits delivery into batches of `RECIPIENT_LIMIT`; the plan cap still applies per message | `5.5.3` |
 | Submission port | 587 | Refuses any other value | n/a |
 
-> **Rate rejections are not free.** Every `450` and `454` raises a risk signal against the
-> connecting IP. 100 message-rate rejections in 30 minutes, or 20 authentication-rate rejections in
-> 15 minutes, ban that IP for 10 minutes to 24 hours. The ban is a TCP reject with no SMTP reply, on
+> **Rate rejections are not free.** Every `454` raises a risk signal against the connecting IP, and a
+> `450` raises one per message rather than per recipient. 100 message-rate rejections in 30 minutes,
+> or 20 authentication-rate rejections in 15 minutes, ban that IP for 10 minutes to 24 hours. The ban is a TCP reject with no SMTP reply, on
 > all submission ports, and the banned address is your cluster's shared egress NAT, so one noisy
 > application takes down every other sender behind it.
 

@@ -122,9 +122,12 @@ tests) decorrelates synchronized multi-replica restarts for the same reason.
 
 ## The fleet connection budget
 
-Upstream HAProxy rejects at `src_conn_cur ge 20` **per source IP**, and the source IP is the cluster
-egress NAT shared by every replica and by anything else sending from behind it. The usable ceiling is
-19.
+Upstream HAProxy admits **20 concurrent connections per source IP**, and the source IP is the cluster
+egress NAT shared by every replica and by anything else sending from behind it. Its rule is
+`src_conn_cur ge MAX_CONN_PER_IP` against a counter that already includes the connection being
+checked, so the deployed 21 admits 20. The fleet rule below leaves two of those 20 spare, for the
+healthcheck of another workload behind the same address and for a replica restarting into an
+overlapping window.
 
 > **FLEET RULE: `instances × RELAY_CONCURRENCY × 2 ≤ 18`**, equivalently
 > `instances × RELAY_CONCURRENCY ≤ 9`, with a floor of two connections per running instance.
@@ -189,8 +192,9 @@ Two deliberate deviations from stock, both documented in the file header:
 1. `tlsproxy` is enabled (stock ships it commented out). Required by `smtp_tls_connection_reuse`.
 2. `chroot` stays `n` on every service. Not cosmetic: a chrooted `smtp(8)` cannot read
    `/etc/resolv.conf` (nothing copies it into the chroot), which breaks resolution of
-   `smtp.mailkube.com` and therefore the integration-test seam; a chrooted `tlsproxy(8)` cannot read `/etc/ssl/certs`, which breaks `smtp_tls_security_level = secure`. It also
-   removes any need for `CAP_SYS_CHROOT`.
+   `smtp.mailkube.com` and therefore the integration-test seam; a chrooted `tlsproxy(8)` cannot read
+   `/etc/ssl/certs`, which breaks `smtp_tls_security_level = secure`. It also removes any need for
+   `CAP_SYS_CHROOT`.
 
 The `smtp inet` line is **replaced**, never supplemented, when `LISTEN_PORT` is not 25 (see
 `_apply_listen_port()`): leaving a port-25 listener in place would fail to bind without

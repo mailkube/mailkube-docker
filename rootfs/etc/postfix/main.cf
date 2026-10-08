@@ -150,9 +150,10 @@ smtp_connection_reuse_count_limit = 90
 # -----------------------------------------------------------------------------
 #  Concurrency -- how the 20-connections-per-source-IP ceiling is respected
 # -----------------------------------------------------------------------------
-#  HAProxy rejects at `src_conn_cur ge 20` PER SOURCE IP, which is per cluster
+#  HAProxy ADMITS 20 concurrent connections PER SOURCE IP, which is per cluster
 #  egress NAT, shared by every replica and anything else sending from behind it.
-#  The usable ceiling is 19.
+#  Its rule is `src_conn_cur ge MAX_CONN_PER_IP` against a counter that already
+#  includes the connection being checked, so the deployed 21 admits 20.
 #
 #  FLEET RULE: instances x smtp_destination_concurrency_limit x 2 <= 18, with a
 #  floor of two connections per running instance. In sidecar mode "instances" is

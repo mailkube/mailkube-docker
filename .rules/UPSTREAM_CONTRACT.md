@@ -119,8 +119,11 @@ recipient. This relay must pass them through byte-for-byte. Two rules follow:
 
 ## 8. The 450/454 to RiskSignal to IP-ban chain
 
-This is the reason most of `main.cf` looks the way it does. **Every 4xx the upstream returns emits a
-RiskSignal**, and RiskSignals accumulate into a TCP ban.
+This is the reason most of `main.cf` looks the way it does. **A rate-limit 4xx emits a RiskSignal**,
+and RiskSignals accumulate into a TCP ban. Two qualifications, both worth knowing before reasoning
+about how fast a ban arrives: a `454` emits one signal per throttled AUTH, while a `450` emits one per
+message rather than one per recipient, because the upstream dedupes on the message transaction id. A
+transient `451` emits nothing.
 
 | Signal rule | Window | Threshold | Ban escalation (1st / 2nd / 3rd+) |
 |---|---|---|---|
