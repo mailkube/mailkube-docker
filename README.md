@@ -309,7 +309,7 @@ local part, so `wordpress@localhost` becomes `wordpress@example.com`.
 ```yaml
 services:
   mailkube-relay:
-    image: ghcr.io/mailkube/smtp-relay:1.0.0
+    image: ghcr.io/mailkube/smtp-relay:latest
     restart: unless-stopped
     env_file: .env
     volumes:
@@ -492,7 +492,7 @@ Images are multi-arch (`linux/amd64`, `linux/arm64`), built with SBOM and proven
 and signed with cosign:
 
 ```bash
-cosign verify ghcr.io/mailkube/smtp-relay:1.0.0 \
+cosign verify ghcr.io/mailkube/smtp-relay:latest \
   --certificate-identity-regexp '^https://github.com/mailkube/mailkube-docker/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
