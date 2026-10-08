@@ -17,7 +17,8 @@ functions, because every interesting behaviour of this image is an interaction w
 |---|---|
 | `connections`, `auths` | the connection-reuse assertion (T-14b). A correct relay carries many messages over one authenticated connection |
 | `auth_times` | AUTHs **per second**, which is what the upstream limit actually constrains, not just the total |
-| `peak_concurrent` | the per-source-IP connection ceiling is respected. Counts **sockets, not deliveries**: with connection reuse a relay holds up to `2 × RELAY_CONCURRENCY` of them, because a finished delivery's socket stays open and cached. T-15 asserts that factor, and the fleet rule depends on it |
+| `peak_concurrent` | the per-source-IP connection ceiling is respected. Counts **sockets, not deliveries**: with connection reuse a relay holds up to `2 × RELAY_LANES` of them with pacing on, or `2 × RELAY_CONCURRENCY` with it off, because a finished delivery's socket stays open and cached. T-15 asserts that factor, and the fleet rule depends on it |
+| `at`, per message | the delivery **timestamp**, which is how the lane tests measure achieved messages per second. A paced lane cannot be proved by reading `postconf`: the config says `1s` whether or not the lanes run independently |
 | `messages`, `data_commands` | delivery vs. attempts, so a 450 retry is visible |
 | `auth_failures` | AUTH rejection paths |
 
@@ -42,9 +43,10 @@ test-only environment variable inside it. That is the point: `smtp_tls_security_
 hardcoded relay host are security-critical, and a test that weakens them tests a different product.
 
 1. **Docker network alias.** The sink container is given `--network-alias smtp.mailkube.com` on a user
-   defined Docker network. The relay resolves the hardcoded name through `smtp_host_lookup = native`
-   and reaches the sink. Ordinary DNS, no relay-side change. (This is also why `master.cf` keeps
-   `chroot = n`: a chrooted `smtp(8)` cannot read `/etc/hosts`.)
+   defined Docker network. The relay resolves the hardcoded name with Postfix's default
+   `smtp_host_lookup = dns`, which asks the container's resolver; on that network it is Docker's
+   embedded DNS, and it answers the alias. Ordinary DNS, no relay-side change. (This is also why
+   `master.cf` keeps `chroot = n`: a chrooted `smtp(8)` cannot read `/etc/resolv.conf`.)
 2. **Hashed CA in CApath.** `gen_ca.py` generates a throwaway CA and a leaf for `smtp.mailkube.com`,
    and emits `ca_hash.txt`. The harness bind-mounts the CA PEM at
    `/etc/ssl/certs/$(cat ca_hash.txt).0`. That is plain OpenSSL trust-store behaviour: `main.cf`

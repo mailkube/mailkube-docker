@@ -50,13 +50,55 @@ and a clean `postfix check`. The correct value carries no port, so the entrypoin
 **never** template a port into it. It is the one upstream-related value `render.sh` deliberately does
 not touch.
 
-### 5. A non-zero rate delay collapses concurrency to 1
+### 5. A non-zero rate delay collapses concurrency to 1, and 1s is the floor
 
 `smtp_destination_rate_delay` is not independent of `smtp_destination_concurrency_limit`: any non-zero
 value implicitly forces per-destination concurrency to 1. Postfix time values are integral, so 1s is
-the smallest usable delay, and 1s is already a large pacing cost. This is why `RELAY_MSG_RATE` is
-opt-in, warns in `validate.sh` when it would take effect, and why `apply_config()` writes an explicit
-`smtp_destination_rate_delay = 0s` on the other branch rather than leaving it unset.
+the smallest usable delay, and therefore **one paced stream can never exceed one message per second.**
+
+That floor is why pacing is built from **lanes** rather than from a single rate value. The delay is
+scoped per transport-and-destination, so N paced transports to the same relayhost are N independent
+streams. `RELAY_LANES=N` arms `mklane1` through `mklaneN`, each at `1s`, and spreads messages across
+them with `randmap`, which is the only distribution primitive Postfix has: every other transport
+selection is a deterministic lookup on the sender or the recipient.
+
+Measured 2026-10-08 against the sink: 12 messages over 4 lanes delivered in **3.2s**, 3.75/sec,
+against the 11s a single paced stream needs. The single-sender case measured the same 3.2s, so the
+sender-keyed `randmap` lookup is **not** cached per sender, which is what makes lanes useful for this
+relay's normal one-`From` workload. See the lane tests in `test/test_relay.py`.
+
+A lane carries *up to* one message per second, slightly under: the delay is inserted **between**
+deliveries, so a lane cycles in 1s plus the delivery's own time. Document lanes as "up to 1/s each",
+never as exactly N/sec.
+
+`apply_config()` still writes an explicit `smtp_destination_rate_delay = 0s`. The plain `smtp`
+transport must stay unpaced, because it carries mail only at `RELAY_LANES=0`, where
+`RELAY_CONCURRENCY` is the control.
+
+### 5b. A lane is its own transport, so `smtp_`-prefixed destination limits do not reach it
+
+This is the trap that makes lanes dangerous to add carelessly. Per-destination parameters fall back
+to their `default_*` form per transport, so a value set on `smtp_*` governs the plain transport only:
+
+| Parameter | Must be set on | Postfix default if it does not reach a lane |
+|---|---|---|
+| `destination_recipient_limit` | `default_` | 50, which **equals** the relay's own value, so the mistake is invisible until `RECIPIENT_LIMIT` is lowered |
+| `destination_concurrency_failed_cohort_limit` | `default_` | **1**, the exact value `main.cf` overrides to 10, where one connect blip defers a whole lane's queue |
+
+Both are set on `default_` in `main.cf` and `render.sh` for that reason, and both have a test.
+Daemon-wide `smtp_*` parameters, the TLS policy, the SASL credential and connection reuse among them,
+are read by every `smtp(8)` instance and reach the lanes unchanged.
+
+### 5c. The lane map shares a parameter with DSN suppression
+
+`sender_dependent_default_transport_maps` carries both the null-sender `discard:` rule and the lane
+`randmap`. Postfix searches maps left to right and takes the first match, and a `randmap` matches
+**every** lookup, so the `pcre:` map must come first. Reversing them routes Postfix's own DSNs
+upstream, where a `MAILER-DAEMON` From is rejected 550 and starts the bounce loop tier 2 exists to
+prevent. `_apply_transport_maps()` composes the value in one place, and a test pins the order.
+
+This parameter is **not** `sender_dependent_relayhost_maps`, which `main.cf` pins empty because it can
+redirect mail off the relay host entirely. Do not conflate them.
 
 ### 6. `smtp_line_length_limit` (998) is the header-breaking parameter, not `line_length_limit` (2048)
 
@@ -88,8 +130,10 @@ answered first.
 
 ## The AUTH arithmetic
 
-The upstream per-domain budget is **2 AUTH/sec**. Everything below is arranged so a normal workload
-performs approximately one AUTH per *burst*, not one per message.
+The upstream per-domain budget is **6 AUTH/sec**. Everything below is arranged so a normal workload
+performs approximately one AUTH per *burst* **per lane**, not one per message. With the default 4
+lanes that is 4 AUTHs per burst per instance, which still clears the 6/sec budget for one instance and
+does not for two starting together; `RELAY_START_JITTER` is what spreads them.
 
 ```
 without reuse:  N messages  ->  N connections  ->  N AUTHs
@@ -113,21 +157,34 @@ The four reuse bounds and why each has the value it has:
 | `smtp_connection_cache_time_limit` | `45s` | upstream `client_timeout` is 1m, so we always close first and never burn a delivery attempt on a server-closed socket. Deliberately **not** equal to `queue_run_delay`, or every deferred retry would arrive exactly as the cached connection expired |
 | `connection_cache_ttl_limit` | `45s` | must match the line above, see trap 2 |
 | `smtp_connection_reuse_time_limit` | `300s` | bounds a reused channel so DNS is re-resolved and TLS sessions rotate |
-| `smtp_connection_reuse_count_limit` | `90` | upstream `max_messages_per_connection` is 100; closing at 90 ends the session at a clean boundary with headroom for any disagreement about what counts as a message |
+| `smtp_connection_reuse_count_limit` | `90` | upstream `max_messages_per_connection` is 5,000 and counts RCPT TO, not messages; 90 deliveries × `RECIPIENT_LIMIT` 50 = 4,500 recipients ends the session at a clean boundary instead of a `421 4.5.3` |
 
 Cold start matters as much as steady state. `initial_destination_concurrency` defaults to **5**, which
-on a cold start means 5 sockets and 5 AUTHs in the first second against a 2/sec budget: an immediate
-454, and every 454 is a RiskSignal. It is pinned to `1`. `RELAY_START_JITTER` (default 15s, set to 0 in
+on a cold start means 5 sockets and 5 AUTHs in the first second. One replica now fits the 6/sec budget,
+but replicas that restart together share it per domain, and every 454 is a RiskSignal. It is pinned to `1`. `RELAY_START_JITTER` (default 15s, set to 0 in
 tests) decorrelates synchronized multi-replica restarts for the same reason.
 
 ## The fleet connection budget
 
-Upstream HAProxy rejects at `src_conn_cur ge 20` **per source IP**, and the source IP is the cluster
-egress NAT shared by every replica and by anything else sending from behind it. The usable ceiling is
-19.
+Upstream HAProxy admits **20 concurrent connections per source IP**, and the source IP is the cluster
+egress NAT shared by every replica and by anything else sending from behind it. Its rule is
+`src_conn_cur ge MAX_CONN_PER_IP` against a counter that already includes the connection being
+checked, so the deployed 21 admits 20. The fleet rule below leaves two of those 20 spare, for the
+healthcheck of another workload behind the same address and for a replica restarting into an
+overlapping window.
 
-> **FLEET RULE: `instances × RELAY_CONCURRENCY × 2 ≤ 18`**, equivalently
-> `instances × RELAY_CONCURRENCY ≤ 9`, with a floor of two connections per running instance.
+> **FLEET RULE: `2 × RELAY_LANES × instances ≤ 18`** with pacing on, which is the default, and
+> **`instances × RELAY_CONCURRENCY × 2 ≤ 18`** at `RELAY_LANES=0`. Either way the fleet holds at most
+> 18 of the 20 admitted connections, with a floor of two per running instance.
+
+Both forms are the same arithmetic, because a lane's rate delay pins its concurrency to 1: the unit
+that costs two connections is a lane when pacing is on and a concurrency slot when it is off. Two
+replicas at the default 4 lanes hold 16; a third breaches the budget. `RELAY_LANES` is capped at 10
+rather than 9 because 10 is the highest plan rate, and `validate.sh` warns above 9 that a single
+instance then holds all 20 and starves everything else behind the same address.
+
+Lanes also multiply AUTH. Each lane authenticates once per burst against the 6/sec per-domain budget,
+so the "one AUTH per burst" arithmetic below holds **per lane**, not per instance.
 
 **The factor of two is not headroom, it is measured.** `RELAY_CONCURRENCY` sets
 `smtp_destination_concurrency_limit`, which bounds concurrent *deliveries*. It does not bound
@@ -187,10 +244,11 @@ exactly one destination that is a total outage triggered by one bad packet.
 Two deliberate deviations from stock, both documented in the file header:
 
 1. `tlsproxy` is enabled (stock ships it commented out). Required by `smtp_tls_connection_reuse`.
-2. `chroot` stays `n` on every service. Not cosmetic: a chrooted `smtp(8)` cannot read `/etc/hosts`,
-   which breaks `smtp_host_lookup = native` and therefore the integration-test seam; a chrooted
-   `tlsproxy(8)` cannot read `/etc/ssl/certs`, which breaks `smtp_tls_security_level = secure`. It also
-   removes any need for `CAP_SYS_CHROOT`.
+2. `chroot` stays `n` on every service. Not cosmetic: a chrooted `smtp(8)` cannot read
+   `/etc/resolv.conf` (nothing copies it into the chroot), which breaks resolution of
+   `smtp.mailkube.com` and therefore the integration-test seam; a chrooted `tlsproxy(8)` cannot read
+   `/etc/ssl/certs`, which breaks `smtp_tls_security_level = secure`. It also removes any need for
+   `CAP_SYS_CHROOT`.
 
 The `smtp inet` line is **replaced**, never supplemented, when `LISTEN_PORT` is not 25 (see
 `_apply_listen_port()`): leaving a port-25 listener in place would fail to bind without

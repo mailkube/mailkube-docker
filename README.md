@@ -162,7 +162,7 @@ sequenceDiagram
   R->>M: QUIT
 ```
 
-Mailkube permits **2 authentications per second per domain**, and exceeding it is not free: each
+Mailkube permits **6 authentications per second per domain**, and exceeding it is not free: each
 rejection raises a risk signal, and enough of them ban your cluster's egress IP. The relay is tuned
 so that a full queue drain costs one authentication rather than one per message. Measured: 20
 messages sent 3 seconds apart cost **1** authentication. With reuse disabled the same workload costs
@@ -193,7 +193,7 @@ hardcodes something else.
 
 ## Configuration
 
-The upstream host is `smtp.mailkube.com` and the port is selectable (587 or 485).
+The upstream is fixed: host `smtp.mailkube.com`, port 587 (STARTTLS).
 
 ### Credentials
 
@@ -224,22 +224,52 @@ file created by `echo` embeds a newline, and that is the single most common caus
 | Variable | Default | Notes |
 |---|---|---|
 | `MESSAGE_SIZE_LIMIT` | `26214400` | 25 MiB, matching the upstream listener cap and the top plan. |
-| `RECIPIENT_LIMIT` | `50` | Recipients per delivery batch. |
+| `RECIPIENT_LIMIT` | `50` | Recipients per delivery batch. Your plan's per-message cap still applies; see the limits table. |
 | `MAX_QUEUE_LIFETIME` | `1d` | How long to keep retrying. Set `1h` for OTP and password-reset traffic. |
-| `RELAY_CONCURRENCY` | `2` | Parallel connections upstream. Read the fleet rule below before raising. |
-| `RELAY_MSG_RATE` | | Your plan's messages/second. `1` or lower enables a 1s pacing delay. |
+| `RELAY_LANES` | `4` | Paced delivery lanes, each sending up to one message per second. Set it to your plan's send rate. `0` turns pacing off. |
+| `RELAY_CONCURRENCY` | `2` | Parallel connections upstream. Applies only at `RELAY_LANES=0`; read the fleet rule below before raising. |
 
-> **Fleet rule:** `instances × RELAY_CONCURRENCY ≤ 9`. Mailkube's edge rejects at 20 concurrent
-> connections **per source IP**, which is your cluster's shared egress NAT address, not per pod.
-> Each concurrency slot costs **two** connection slots upstream, not one: connection reuse keeps a
-> finished connection open and idle for up to 45 seconds so the next message can reuse it, and an
-> idle connection still occupies a slot. Four relay replicas at the default concurrency fit. In
-> sidecar mode "instances" is your application pod count, so cap it at roughly 4 app pods per egress
-> address.
+#### Send rate: set `RELAY_LANES` to your plan
 
-`RELAY_MSG_RATE` is off by default because we cannot know your plan from inside the container, and
-Postfix's minimum pacing interval is one second, which would throttle higher tiers by 6x. Enabling
-any pacing collapses concurrency to 1; that is Postfix behaviour, not a choice this image makes.
+The relay paces itself so it does not exceed your plan's send rate. Each lane carries up to one
+message per second, so the lane count *is* the rate in messages per second.
+
+| Your plan | `RELAY_LANES` | Upstream connections held |
+|---|---|---|
+| Free | `4` (the default) | 8 of 20 |
+| Launch, Momentum | `6` | 12 of 20 |
+| Elite, Ultimate | `8` | 16 of 20 |
+| Scale, Volume, Enterprise | `10` | 20 of 20 |
+
+> **The default caps throughput at roughly 4 messages per second.** Earlier versions of this image
+> did not pace at all and sent as fast as the network allowed. If you are on any plan above Free,
+> raise `RELAY_LANES` to the rate in the table or you are leaving your plan's capacity unused.
+
+Why lanes rather than a single rate setting: Postfix's one pacing control,
+`smtp_destination_rate_delay`, takes an **integral** time value, so a single stream can never send
+faster than one message per second. The delay is scoped per transport, so the relay runs several
+paced transports and spreads messages across them. Measured against the test harness, 12 messages
+over 4 lanes delivered in 3.2 seconds.
+
+Two consequences worth knowing. Each lane holds **two** upstream connections, one delivering and one
+cached idle for reuse, which is where the table's right-hand column comes from. And a lane's pacing
+pins its own concurrency to 1, so `RELAY_CONCURRENCY` governs nothing unless you set
+`RELAY_LANES=0`.
+
+At `RELAY_LANES=0` the relay sends at whatever speed the network allows, and upstream answers
+`450 4.7.1` for every message over your plan's rate. Each of those raises a risk signal, and enough
+of them ban your egress address, so treat it as a deliberate choice rather than a faster default.
+
+> **Fleet rule:** `2 × RELAY_LANES × instances ≤ 18`, or `instances × RELAY_CONCURRENCY ≤ 9` when
+> pacing is off. Mailkube's edge admits 20 concurrent connections **per source IP**, which is your
+> cluster's shared egress NAT address, not per pod. Two replicas at the default 4 lanes hold 16 of
+> the 20; a third exceeds the budget. The rule leaves two connections spare for anything else
+> sending from behind the same address. In sidecar mode "instances" is your application pod count,
+> which this container cannot see or check.
+
+Lanes also multiply authentications. Each lane authenticates once per burst, against a budget of
+**6 per second per domain**, so 8 or 10 lanes across two replicas starting together can trip it.
+`RELAY_START_JITTER` exists to spread exactly that.
 
 ### Inbound authentication (optional)
 
@@ -309,7 +339,7 @@ local part, so `wordpress@localhost` becomes `wordpress@example.com`.
 ```yaml
 services:
   mailkube-relay:
-    image: ghcr.io/mailkube/smtp-relay:1.0.0
+    image: ghcr.io/mailkube/smtp-relay:latest
     restart: unless-stopped
     env_file: .env
     volumes:
@@ -375,16 +405,16 @@ the `oc adm policy` command.
 
 | Mailkube limit | Value | What the relay does | If you exceed it |
 |---|---|---|---|
-| Authentications | 2/sec per domain | Reuses one authenticated connection for up to 90 messages | `454 4.7.0`, plus a risk signal |
+| Authentications | 6/sec per domain | Reuses one authenticated connection for up to 90 messages | `454 4.7.0`, plus a risk signal |
 | Concurrent connections | 20 per source IP | `RELAY_CONCURRENCY=2`, ramping from 1 on cold start, costing 4 slots at steady state | TCP reject, no SMTP reply |
-| Messages | 1 to 6/sec by plan | Queues and retries; optional `RELAY_MSG_RATE` pacing | `450 4.7.1`, plus a risk signal |
+| Messages | 4 to 10/sec by plan | Paces at `RELAY_LANES` messages/sec, defaulting to 4; queues and retries past that | `450 4.7.1`, plus a risk signal |
 | Message size | 10/15/25 MB by plan, 25 MiB at the edge | Rejects locally at `MESSAGE_SIZE_LIMIT` | `552` locally, or `5.3.4` upstream |
-| Recipients | 1 to 50 by plan | Splits into batches of `RECIPIENT_LIMIT` | `5.5.3` |
+| Recipients | 4 to 50 by plan | Splits delivery into batches of `RECIPIENT_LIMIT`; the plan cap still applies per message | `5.5.3` |
 | Submission port | 587 | Refuses any other value | n/a |
 
-> **Rate rejections are not free.** Every `450` and `454` raises a risk signal against the
-> connecting IP. 100 message-rate rejections in 30 minutes, or 20 authentication-rate rejections in
-> 15 minutes, ban that IP for 10 minutes to 24 hours. The ban is a TCP reject with no SMTP reply, on
+> **Rate rejections are not free.** Every `454` raises a risk signal against the connecting IP, and a
+> `450` raises one per message rather than per recipient. 100 message-rate rejections in 30 minutes,
+> or 20 authentication-rate rejections in 15 minutes, ban that IP for 10 minutes to 24 hours. The ban is a TCP reject with no SMTP reply, on
 > all submission ports, and the banned address is your cluster's shared egress NAT, so one noisy
 > application takes down every other sender behind it.
 
@@ -437,9 +467,9 @@ For Prometheus, run a `postfix_exporter` sidecar against the shared spool volume
 | `5.7.8` | Bad credentials | Check the username is `user@domain` and the password is an SMTP credential |
 | `5.7.1` | `From` domain does not match | Fix the sender, or set `ENFORCE_FROM_DOMAIN=yes` |
 | `4.7.0` | Authentication throttled | Transient. Persistent means connection reuse is broken |
-| `4.7.1` | Message rate exceeded | Transient. Consider `RELAY_MSG_RATE` |
+| `4.7.1` | Message rate exceeded | Transient. Set `RELAY_LANES` to your plan's send rate |
 | `5.3.4` | Message too large | Check your plan's limit |
-| `5.5.3` | Too many recipients | Lower `RECIPIENT_LIMIT` |
+| `5.5.3` | Too many recipients | Send fewer To, Cc and Bcc addresses per message; your plan sets the cap |
 | `5.6.0` | Invalid content, tags, or template | Check the `X-Mailkube-*` headers |
 | `5.7.0` | Quota exceeded | Check your plan usage |
 
@@ -492,7 +522,7 @@ Images are multi-arch (`linux/amd64`, `linux/arm64`), built with SBOM and proven
 and signed with cosign:
 
 ```bash
-cosign verify ghcr.io/mailkube/smtp-relay:1.0.0 \
+cosign verify ghcr.io/mailkube/smtp-relay:latest \
   --certificate-identity-regexp '^https://github.com/mailkube/mailkube-docker/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

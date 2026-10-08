@@ -4,8 +4,9 @@ Two seams let the tests exercise a relay whose upstream host is hardcoded, with
 no override environment variable and no test-only code path in the image:
 
 1. **Name.** The sink container is given the Docker network alias
-   ``smtp.mailkube.com``. The relay resolves it because main.cf keeps
-   ``smtp_host_lookup = native, dns``.
+   ``smtp.mailkube.com``. The relay resolves it with Postfix's default
+   ``smtp_host_lookup = dns``, which asks the container's resolver: Docker's
+   embedded DNS, which answers the alias on this network.
 2. **Trust.** ``smtp_tls_security_level = secure`` needs a verifiable chain, so
    the harness bind-mounts the throwaway CA into the container's OpenSSL trust
    store as ``/etc/ssl/certs/<subject-hash>.0``. That is ordinary CApath

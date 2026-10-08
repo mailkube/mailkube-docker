@@ -119,8 +119,11 @@ recipient. This relay must pass them through byte-for-byte. Two rules follow:
 
 ## 8. The 450/454 to RiskSignal to IP-ban chain
 
-This is the reason most of `main.cf` looks the way it does. **Every 4xx the upstream returns emits a
-RiskSignal**, and RiskSignals accumulate into a TCP ban.
+This is the reason most of `main.cf` looks the way it does. **A rate-limit 4xx emits a RiskSignal**,
+and RiskSignals accumulate into a TCP ban. Two qualifications, both worth knowing before reasoning
+about how fast a ban arrives: a `454` emits one signal per throttled AUTH, while a `450` emits one per
+message rather than one per recipient, because the upstream dedupes on the message transaction id. A
+transient `451` emits nothing.
 
 | Signal rule | Window | Threshold | Ban escalation (1st / 2nd / 3rd+) |
 |---|---|---|---|
@@ -128,10 +131,15 @@ RiskSignal**, and RiskSignals accumulate into a TCP ban.
 | `IP_AUTH_RATE_LIMITED` (auth throttle, 454) | 15 min | 20 signals | 60 / 360 / 1440 min |
 
 Note how much cheaper it is to trip the AUTH rule: 20 signals in 15 minutes for a **one hour** first
-ban, escalating to a full day. The per-domain budget upstream is 2 AUTH/sec, so an image that
+ban, escalating to a full day. The per-domain budget upstream is 6 AUTH/sec, so an image that
 authenticates once per message reaches 20 throttled AUTHs during any ordinary backlog drain. That is
 the whole justification for `smtp_tls_connection_reuse = yes`, `initial_destination_concurrency = 1`,
 `minimal_backoff_time = 120s` and `RELAY_START_JITTER`.
+
+`RELAY_LANES` spends against this same budget: each paced lane holds its own authenticated connection,
+so the cost is one AUTH per burst **per lane**. The default of 4 clears 6/sec for a single instance;
+two instances at 8 or 10 lanes starting together do not, which is what the startup jitter spreads.
+See the fleet budget in `.rules/POSTFIX_TUNING.md`.
 
 **What a ban actually is:** a TCP-level reject on ports 587 and 25, with **no SMTP banner**. The
 client sees a connection failure, not a 5xx, so there is no diagnostic reply to read and nothing in the

@@ -77,6 +77,21 @@ def test_t08b_concurrency_of_ten_breaches_the_ceiling_alone(factory):
     _fails(factory, "between 1 and 9", SMTP_USERNAME="a@b.com", SMTP_PASSWORD="x", RELAY_CONCURRENCY="10")
 
 
+def test_lanes_above_the_ceiling_are_refused(factory):
+    """11 lanes would hold 22 connections, more than the upstream admits at all.
+
+    The boundary is pinned because 10 is both the highest plan rate and the point where a
+    single instance consumes the whole per-source-IP budget: 10 boots with a warning, 11
+    does not boot.
+    """
+    _fails(factory, "between 0 and 10", SMTP_USERNAME="a@b.com", SMTP_PASSWORD="x", RELAY_LANES="11")
+
+
+def test_lanes_reject_a_negative_value(factory):
+    """0 is off, so a negative value is a typo rather than a stronger kind of off."""
+    _fails(factory, "between 0 and 10", SMTP_USERNAME="a@b.com", SMTP_PASSWORD="x", RELAY_LANES="-1")
+
+
 @pytest.mark.parametrize(
     ("var", "value"),
     [
@@ -85,6 +100,10 @@ def test_t08b_concurrency_of_ten_breaches_the_ceiling_alone(factory):
         ("OVERWRITE_FROM", "noreply@example.com"),
         ("LOG_SUBJECT", "yes"),
         ("SMTP_HEADER_TAG", "relay"),
+        #  Renamed to RELAY_LANES. Failing matters more here than for the others: the
+        #  old name accepted 1 to 100 and silently paced at nothing above 1, so an
+        #  operator who set 4 believed they had a 4/sec cap and had none.
+        ("RELAY_MSG_RATE", "4"),
     ],
 )
 def test_t09_removed_variables_fail_loudly_and_name_the_replacement(factory, var, value):

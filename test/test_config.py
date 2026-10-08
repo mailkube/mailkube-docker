@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pytest
 
+from conftest import AUTH_DOMAIN
+
 
 def test_t11_relayhost_is_the_hardcoded_upstream_on_587(pair):
     _, relay = pair
@@ -97,7 +99,9 @@ def test_t12_cache_time_differs_from_queue_run_delay(pair):
         ("in_flow_delay", "0s"),
         ("initial_destination_concurrency", "1"),
         ("smtp_destination_concurrency_limit", "2"),
-        ("smtp_destination_concurrency_failed_cohort_limit", "10"),
+        #  On `default_` so every transport inherits it, the mklane* lanes included.
+        #  Postfix's own default is 1, where one connect blip defers a whole queue.
+        ("default_destination_concurrency_failed_cohort_limit", "10"),
         ("message_size_limit", "26214400"),
         ("smtp_line_length_limit", "998"),
         ("minimal_backoff_time", "120s"),
@@ -126,7 +130,7 @@ def test_t12_tlsproxy_and_scache_services_exist(pair):
         ({"RELAY_HOSTNAME": "relay.example.com"}, "myhostname", "relay.example.com"),
         ({"SMTPUTF8_ENABLE": "yes"}, "smtputf8_enable", "yes"),
         ({"MAX_QUEUE_LIFETIME": "4h"}, "maximal_queue_lifetime", "4h"),
-        ({"RECIPIENT_LIMIT": "10"}, "smtp_destination_recipient_limit", "10"),
+        ({"RECIPIENT_LIMIT": "10"}, "default_destination_recipient_limit", "10"),
     ],
 )
 def test_env_knobs_reach_postfix(factory, env, param, expected):
@@ -140,18 +144,92 @@ def test_env_knobs_reach_postfix(factory, env, param, expected):
     assert relay.postconf_one(param) == expected
 
 
-def test_relay_msg_rate_enables_pacing_only_at_one_per_second(factory):
-    """Pacing is opt-in, and any non-zero delay collapses concurrency to 1 in Postfix.
+def test_relay_lanes_paces_each_lane_at_one_per_second(factory):
+    """RELAY_LANES=N arms N lane transports at 1s each and spreads messages over them.
 
-    Postfix time values are integral, so 1s is the smallest usable delay. That is
-    why a blanket default would throttle higher plan tiers by 6x.
+    Postfix time values are integral, so one stream cannot pace faster than 1/s. N
+    lanes is how the per-second rate becomes selectable at all; see the lane tests in
+    test_relay.py for the measurement that the lanes really do run independently.
     """
     factory.sink()
-    slow = factory.relay(RELAY_MSG_RATE="1")
-    assert slow.postconf_one("smtp_destination_rate_delay") == "1s"
+    relay = factory.relay(RELAY_LANES="3")
 
-    fast = factory.relay(RELAY_MSG_RATE="6")
-    assert fast.postconf_one("smtp_destination_rate_delay") == "0s"
+    for lane in (1, 2, 3):
+        assert relay.postconf_one(f"mklane{lane}_destination_rate_delay") == "1s"
+    #  The fourth lane exists as a service but is never armed or routed to.
+    assert relay.postconf_one("mklane4_destination_rate_delay") != "1s"
+
+    maps = relay.postconf_one("sender_dependent_default_transport_maps")
+    assert maps.endswith("randmap:{mklane1:,mklane2:,mklane3:}"), maps
+    #  The plain smtp transport stays unpaced: it carries mail only at RELAY_LANES=0.
+    assert relay.postconf_one("smtp_destination_rate_delay") == "0s"
+
+
+def test_relay_lanes_defaults_to_the_free_plan_rate(factory):
+    """Omitted, the relay paces at 4/sec, the Free plan's rate.
+
+    Pinned because the default is a behaviour change from the unpaced releases before it,
+    and because 4 is the number the README's per-plan table is anchored on.
+    """
+    factory.sink()
+    relay = factory.relay()
+
+    for lane in (1, 2, 3, 4):
+        assert relay.postconf_one(f"mklane{lane}_destination_rate_delay") == "1s"
+    assert relay.postconf_one("mklane5_destination_rate_delay") != "1s"
+
+
+def test_relay_lanes_zero_disables_pacing_and_restores_concurrency(factory):
+    """RELAY_LANES=0 hands delivery back to the single unpaced smtp transport."""
+    factory.sink()
+    relay = factory.relay(RELAY_LANES="0", RELAY_CONCURRENCY="3")
+
+    assert relay.postconf_one("smtp_destination_rate_delay") == "0s"
+    assert relay.postconf_one("smtp_destination_concurrency_limit") == "3"
+    assert "randmap" not in relay.postconf_one("sender_dependent_default_transport_maps")
+
+
+def test_lane_routing_keeps_the_dsn_suppression_map_first(factory):
+    """The lane randmap must never shadow the null-sender discard rule.
+
+    Both share sender_dependent_default_transport_maps, and Postfix takes the first
+    match. A randmap matches every lookup, so ordering it before the pcre map would
+    route Postfix's own DSNs upstream, where a MAILER-DAEMON From is rejected 550 and
+    starts the bounce loop tier 2 exists to prevent.
+    """
+    factory.sink()
+    relay = factory.relay(RELAY_LANES="2")
+
+    maps = relay.postconf_one("sender_dependent_default_transport_maps").split()
+    assert maps[0].startswith("pcre:"), f"DSN suppression is not first: {maps}"
+    assert maps[1].startswith("randmap:"), f"lanes are not second: {maps}"
+
+
+def test_lane_routing_drops_the_pcre_map_when_bounces_are_delivered(factory):
+    """Tier 3 delivers DSNs locally, so the null-sender discard map is not written."""
+    factory.sink()
+    relay = factory.relay(RELAY_LANES="2", BOUNCE_RECIPIENT=f"ops@{AUTH_DOMAIN}")
+
+    maps = relay.postconf_one("sender_dependent_default_transport_maps").split()
+    assert len(maps) == 1 and maps[0].startswith("randmap:"), maps
+
+
+def test_recipient_limit_reaches_the_lanes(factory):
+    """RECIPIENT_LIMIT must be set on `default_`, not `smtp_`, or lanes ignore it.
+
+    A lane is its own transport, so an smtp_-prefixed value never reaches it. Postfix's
+    own default is also 50, so the mistake stays invisible until the value is lowered.
+    """
+    factory.sink()
+    relay = factory.relay(RELAY_LANES="2", RECIPIENT_LIMIT="4")
+    assert relay.postconf_one("default_destination_recipient_limit") == "4"
+
+
+def test_failed_cohort_limit_reaches_the_lanes(factory):
+    """Postfix defaults this to 1, where one connect blip defers a whole lane's queue."""
+    factory.sink()
+    relay = factory.relay(RELAY_LANES="2")
+    assert relay.postconf_one("default_destination_concurrency_failed_cohort_limit") == "10"
 
 
 def test_shutdown_drain_timeout_is_accepted_and_bounded(factory):

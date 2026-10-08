@@ -22,10 +22,11 @@
 #  delivery outcomes belong in the Mailkube sending log and in webhooks, which
 #  see the whole platform rather than this one hop.
 #
-#  Fleet connection budget: instances x RELAY_CONCURRENCY <= 9. The upstream
-#  edge rejects at 20 concurrent connections per source IP, shared by every
-#  instance behind your egress address, and each unit of concurrency holds two
-#  connections: one delivering, one cached idle for reuse.
+#  Fleet connection budget: 2 x RELAY_LANES x instances <= 18, because the
+#  upstream edge admits 20 concurrent connections per source IP, that IP is
+#  your host's shared egress address, and each paced lane holds two
+#  connections: one delivering, one cached idle for reuse. At RELAY_LANES=0
+#  the budget is instances x RELAY_CONCURRENCY <= 9 instead.
 # =============================================================================
 
 services:
