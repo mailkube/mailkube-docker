@@ -35,8 +35,8 @@ from `.rules/` based on the task.
   the finding. Pinned in `.shellcheckrc`.
 - **`shfmt -i 2 -ci -sr`** formats every shell file. **hadolint** lints the `Dockerfile`
   (`failure-threshold: warning`, `.hadolint.yaml`).
-- **The base image is pinned by digest** (`alpine:3.24@sha256:28bd…3f8b`). Dependabot bumps it; never
-  replace the digest pin with a floating tag.
+- **The base image is pinned by digest** in the `Dockerfile` (`alpine:3.24@sha256:…`). Dependabot bumps
+  it; never replace the digest pin with a floating tag.
 - **No secrets in the image or the repo.** The SMTP credential arrives at runtime through
   `SMTP_PASSWORD` / `SMTP_PASSWORD_FILE` and is written to `/run/postfix/sasl_passwd` on tmpfs.
 - **CI job names `test`, `dry` and `docs` are branch-protection required checks.** Renaming a job

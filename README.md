@@ -193,7 +193,7 @@ hardcodes something else.
 
 ## Configuration
 
-The upstream host is `smtp.mailkube.com` and the port is selectable (587 or 485).
+The upstream is fixed: host `smtp.mailkube.com`, port 587 (STARTTLS).
 
 ### Credentials
 

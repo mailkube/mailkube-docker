@@ -6,8 +6,10 @@ the OCI labels, the healthcheck, or the runtime security posture.
 ## Base image
 
 ```
-FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM alpine:3.24@sha256:<digest>
 ```
+
+The digest lives only in the `Dockerfile`; Dependabot bumps it there, so it is not repeated here.
 
 - **Alpine, not Debian.** Debian would cost roughly 4x the image size and 4x the CVE surface. This is a
   sidecar: pulled on every pod start, in every pod, on every node. That is a real operational cost for

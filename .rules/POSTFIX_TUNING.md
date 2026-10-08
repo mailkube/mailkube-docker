@@ -187,9 +187,9 @@ exactly one destination that is a total outage triggered by one bad packet.
 Two deliberate deviations from stock, both documented in the file header:
 
 1. `tlsproxy` is enabled (stock ships it commented out). Required by `smtp_tls_connection_reuse`.
-2. `chroot` stays `n` on every service. Not cosmetic: a chrooted `smtp(8)` cannot read `/etc/hosts`,
-   which breaks `smtp_host_lookup = native` and therefore the integration-test seam; a chrooted
-   `tlsproxy(8)` cannot read `/etc/ssl/certs`, which breaks `smtp_tls_security_level = secure`. It also
+2. `chroot` stays `n` on every service. Not cosmetic: a chrooted `smtp(8)` cannot read
+   `/etc/resolv.conf` (nothing copies it into the chroot), which breaks resolution of
+   `smtp.mailkube.com` and therefore the integration-test seam; a chrooted `tlsproxy(8)` cannot read `/etc/ssl/certs`, which breaks `smtp_tls_security_level = secure`. It also
    removes any need for `CAP_SYS_CHROOT`.
 
 The `smtp inet` line is **replaced**, never supplemented, when `LISTEN_PORT` is not 25 (see

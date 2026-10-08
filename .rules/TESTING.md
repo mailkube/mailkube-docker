@@ -42,9 +42,10 @@ test-only environment variable inside it. That is the point: `smtp_tls_security_
 hardcoded relay host are security-critical, and a test that weakens them tests a different product.
 
 1. **Docker network alias.** The sink container is given `--network-alias smtp.mailkube.com` on a user
-   defined Docker network. The relay resolves the hardcoded name through `smtp_host_lookup = native`
-   and reaches the sink. Ordinary DNS, no relay-side change. (This is also why `master.cf` keeps
-   `chroot = n`: a chrooted `smtp(8)` cannot read `/etc/hosts`.)
+   defined Docker network. The relay resolves the hardcoded name with Postfix's default
+   `smtp_host_lookup = dns`, which asks the container's resolver; on that network it is Docker's
+   embedded DNS, and it answers the alias. Ordinary DNS, no relay-side change. (This is also why
+   `master.cf` keeps `chroot = n`: a chrooted `smtp(8)` cannot read `/etc/resolv.conf`.)
 2. **Hashed CA in CApath.** `gen_ca.py` generates a throwaway CA and a leaf for `smtp.mailkube.com`,
    and emits `ca_hash.txt`. The harness bind-mounts the CA PEM at
    `/etc/ssl/certs/$(cat ca_hash.txt).0`. That is plain OpenSSL trust-store behaviour: `main.cf`
