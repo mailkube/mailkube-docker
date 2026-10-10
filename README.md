@@ -12,7 +12,7 @@ authenticated TLS. The endpoint is **unauthenticated by default**, with
 
 Deploy it as a sidecar or as a cluster-wide service, on Kubernetes, OpenShift, or Docker Compose.
 
-Full product and API documentation: [mailkube.com/docs](https://mailkube.com/docs).
+Full product and API documentation: [docs.mailkube.com/sdks/docker-relay](https://docs.mailkube.com/sdks/docker-relay).
 
 ## Quickstart
 
@@ -473,7 +473,7 @@ For Prometheus, run a `postfix_exporter` sidecar against the shared spool volume
 | `5.6.0` | Invalid content, tags, or template | Check the `X-Mailkube-*` headers |
 | `5.7.0` | Quota exceeded | Check your plan usage |
 
-The full reference is at [mailkube.com/docs](https://mailkube.com/docs).
+The full reference is at [docs.mailkube.com/sdks/docker-relay](https://docs.mailkube.com/sdks/docker-relay).
 
 ## Security model
 
